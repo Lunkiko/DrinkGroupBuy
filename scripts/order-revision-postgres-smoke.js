@@ -18,10 +18,13 @@ const proofId = randomUUID();
 const activityIdA = `activity-revision-apply-${proofId}`;
 const activityIdB = `activity-revision-reject-${proofId}`;
 const activityIdC = `activity-revision-cancel-${proofId}`;
+const activityIdD = `activity-revision-boundary-${proofId}`;
 const orderIdA = `order-revision-apply-${proofId}`;
 const orderIdB1 = `order-revision-reject-1-${proofId}`;
 const orderIdB2 = `order-revision-reject-2-${proofId}`;
 const orderIdC = `order-revision-cancel-${proofId}`;
+const orderIdD = `order-revision-boundary-own-${proofId}`;
+const orderIdDFiller = `order-revision-boundary-filler-${proofId}`;
 
 const DRINK_ITEM = {
   menuItemId: "drink-001",
@@ -205,6 +208,62 @@ async function main() {
     `, [orderIdC]);
     assert.deepEqual(orderCUnchanged.rows[0], { total_cups: 2, original_amount: 130, payment_status: "authorized" });
 
+    // --- Scenario D: exact-boundary success. Activity capped at 30 cups, a filler order
+    // already holds 27 (unrelated to the customer's own order), and the customer's own order
+    // goes from 2 -> 3 cups. The capacity check must exclude the order's OWN existing cups
+    // from the "already authorized" baseline before re-adding the new total, or this would be
+    // wrongly rejected as double-counting (27 + 2 + 3 = 32 > 30) instead of correctly landing
+    // exactly on the cap (27 + 3 = 30). This mirrors a real reported scenario: activity shows
+    // 29/30, the customer's own order is already 2 of those 29, they want to bump it to 3.
+    const createdD = await orderRevisionRepository.createRevision({
+      orderId: orderIdD,
+      customerUserId: fixture.customerD,
+      items: items(3),
+    });
+    assert.ok(createdD.revision, "revision D should be created: 27 (others) + 3 (new total) = 30, exactly at cap");
+
+    const pendingD = await requestRepository.createPendingAuthorization({
+      orderRevisionId: createdD.revision.id,
+      amount: 195,
+      provider: "mock_line_pay",
+      providerTransactionId: `mock-txn-revision-boundary-${proofId}`,
+    });
+    assert.equal(pendingD.status, "pending");
+
+    const confirmedD = await confirmRepository.confirmAuthorization({
+      orderId: orderIdD,
+      provider: "mock_line_pay",
+      providerTransactionId: `mock-txn-revision-boundary-${proofId}`,
+      amount: 195,
+    });
+    assert.equal(confirmedD.status, "authorized", "confirm must succeed exactly at the capacity boundary");
+    assert.ok(confirmedD.appliedOrderRevision, "revision D should be applied, not rejected");
+    assert.equal(confirmedD.appliedOrderRevision.status, "applied");
+
+    const orderDAfter = await database.query(
+      "SELECT total_cups, payment_status FROM orders WHERE id = $1", [orderIdD]
+    );
+    assert.deepEqual(orderDAfter.rows[0], { total_cups: 3, payment_status: "authorized" });
+
+    const activityDTotal = await database.query(`
+      SELECT COALESCE(SUM(total_cups), 0)::integer AS cups
+      FROM orders WHERE activity_id = $1 AND payment_status IN ('authorized', 'captured') AND status != 'cancelled'
+    `, [activityIdD]);
+    assert.equal(activityDTotal.rows[0].cups, 30, "activity should now sit exactly at its 30-cup cap");
+
+    // --- Scenario E: one cup past the same boundary must still be rejected. Activity D is now
+    // exactly full (30/30); revising the filler order from 27 -> 28 needs 3 (order D) + 28 = 31,
+    // one over the cap, and must be rejected at revision-creation time (not silently allowed).
+    const rejectedE = await orderRevisionRepository.createRevision({
+      orderId: orderIdDFiller,
+      customerUserId: fixture.customerDFiller,
+      items: items(28),
+    });
+    assert.equal(rejectedE.error, "capacity_exceeded");
+    assert.equal(rejectedE.authorizedCups, 3);
+    assert.equal(rejectedE.requestedCups, 28);
+    assert.equal(rejectedE.maximumCups, 30);
+
     // --- Edge cases: already-pending revision, and revision not found. ---
     const duplicateAttemptC = await orderRevisionRepository.createRevision({
       orderId: orderIdC,
@@ -252,7 +311,9 @@ async function createFixture(database) {
   const pickupEnd = new Date(now.getTime() + 10 * 60 * 60_000).toISOString();
 
   await database.transaction(async (transaction) => {
-    for (const [activityId, maximumCups] of [[activityIdA, 10], [activityIdB, 4], [activityIdC, 10]]) {
+    for (const [activityId, maximumCups] of [
+      [activityIdA, 10], [activityIdB, 4], [activityIdC, 10], [activityIdD, 30],
+    ]) {
       await transaction.query(`
         INSERT INTO group_buy_activities (
           id, store_id, created_by_user_id, title, status,
@@ -275,9 +336,23 @@ async function createFixture(database) {
       orderId: orderIdC, activityId: activityIdC, customerUserId: customerC,
       totalCups: 2, amount: 130, authorizationId: `payment-authorization-revision-cancel-${proofId}`,
     });
+    // Scenario D/E fixture: reusing customerC/customerB2 here is fine -- the "one active order
+    // per customer per activity" constraint is scoped per activity, and this is a different one.
+    await insertAuthorizedOrder(transaction, {
+      orderId: orderIdDFiller, activityId: activityIdD, customerUserId: customerB2,
+      totalCups: 27, amount: 27 * 65, authorizationId: `payment-authorization-revision-boundary-filler-${proofId}`,
+    });
+    await insertAuthorizedOrder(transaction, {
+      orderId: orderIdD, activityId: activityIdD, customerUserId: customerC,
+      totalCups: 2, amount: 130, authorizationId: `payment-authorization-revision-boundary-own-${proofId}`,
+    });
   });
 
-  return { customerA, customerB1, customerB2, customerC, authIdA: `payment-authorization-revision-apply-${proofId}` };
+  return {
+    customerA, customerB1, customerB2, customerC,
+    customerD: customerC, customerDFiller: customerB2,
+    authIdA: `payment-authorization-revision-apply-${proofId}`,
+  };
 }
 
 async function insertAuthorizedOrder(database, { orderId, activityId, customerUserId, totalCups, amount, authorizationId }) {
@@ -298,8 +373,8 @@ async function insertAuthorizedOrder(database, { orderId, activityId, customerUs
 }
 
 async function cleanup(database) {
-  const activityIds = [activityIdA, activityIdB, activityIdC];
-  const orderIds = [orderIdA, orderIdB1, orderIdB2, orderIdC];
+  const activityIds = [activityIdA, activityIdB, activityIdC, activityIdD];
+  const orderIds = [orderIdA, orderIdB1, orderIdB2, orderIdC, orderIdD, orderIdDFiller];
   await database.transaction(async (transaction) => {
     await transaction.query(
       "DELETE FROM order_revision_item_customizations WHERE order_revision_item_id IN ("
