@@ -80,6 +80,28 @@ async function main() {
     assert.equal(credentialForOrderA.status, "active");
     assert.ok(credentialForOrderA.pickupCode, "active credential should expose its pickup code");
 
+    // 4b. Cross-store protection: a merchant from a DIFFERENT store must not be able to look up
+    // or redeem this code, even though it's a syntactically valid 6-digit code. The repository
+    // scopes both queries through merchant_users.store_id, so this must come back as
+    // "not found" (not a permission error that would leak the code's existence).
+    const otherStoreLookup = await lookupPickupCode({
+      actorUserId: fixture.otherStoreMerchantUserId,
+      pickupCode: credentialForOrderA.pickupCode,
+      pickupCredentialRepository: repository,
+    });
+    assert.equal(otherStoreLookup.error, "credential_not_found", "a different store's merchant must not see this code");
+
+    const otherStoreRedeem = await redeemPickupCode({
+      actorUserId: fixture.otherStoreMerchantUserId,
+      pickupCode: credentialForOrderA.pickupCode,
+      pickupCredentialRepository: repository,
+    });
+    assert.equal(otherStoreRedeem.error, "credential_not_found", "a different store's merchant must not redeem this code");
+    const orderANotRedeemedByOtherStore = await database.query(
+      "SELECT pickup_status FROM orders WHERE id = $1", [orderIdA]
+    );
+    assert.equal(orderANotRedeemedByOtherStore.rows[0].pickup_status, "ready", "cross-store attempt must not change order state");
+
     // 5. Merchant lookup + redeem for order A.
     const lookup = await lookupPickupCode({
       actorUserId: fixture.merchantUserId,
@@ -164,6 +186,12 @@ async function createFixture(database) {
     WHERE store_id = 'store-001' AND status = 'active'
     LIMIT 1
   `);
+  const otherStoreMerchantResult = await database.query(`
+    SELECT user_id FROM merchant_users
+    WHERE store_id != 'store-001' AND status = 'active'
+    LIMIT 1
+  `);
+  assert.ok(otherStoreMerchantResult.rows[0], "A merchant user from a different store is required");
   const customersResult = await database.query(`
     SELECT user_account.id
     FROM users user_account
@@ -230,7 +258,7 @@ async function createFixture(database) {
     `, [expiredOrderId, expiredActivityId, customersResult.rows[0].id, now.toISOString()]);
   });
 
-  return { merchantUserId };
+  return { merchantUserId, otherStoreMerchantUserId: otherStoreMerchantResult.rows[0].user_id };
 }
 
 async function cleanup(database) {
