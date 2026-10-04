@@ -314,20 +314,14 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
   // Only the run that actually just completed the settlement should notify -- a retried job that
   // finds the settlement already recorded (completion.alreadyCompleted) already sent this once.
   // Not awaited: notifyUsers never throws (see pushSender.js), and the merchant/admin waiting on
-  // this settlement's HTTP response shouldn't be blocked on an Expo push round-trip (up to 5s).
+  // this settlement's HTTP response shouldn't be blocked on a DB read or an Expo round-trip (up to 5s).
   if (!completion?.error && !completion?.alreadyCompleted) {
-    for (const notification of buildSettlementNotifications(plan, results)) {
-      notifyUsers(notification, {
-        pushTokenRepository: input.pushTokenRepository,
-        logger: input.logger,
-      }).catch((error) => {
-        (input.logger || console).error?.("[push-notification] failed to notify settlement outcome", {
-          activityId,
-          type: notification.data?.type,
-          message: error.message,
-        });
+    sendSettlementNotifications({ plan, results, input }).catch((error) => {
+      (input.logger || console).error?.("[push-notification] failed to notify settlement outcome", {
+        activityId,
+        message: error.message,
       });
-    }
+    });
   }
 
   return {
@@ -372,6 +366,35 @@ function buildGroupBuyQualifiedNotification(plan, results) {
   };
 }
 
+async function sendSettlementNotifications({ plan, results, input }) {
+  const finalOrders = await loadFinalOutcomeOrders(plan, input);
+  for (const notification of buildSettlementNotifications(plan, results, finalOrders)) {
+    await notifyUsers(notification, {
+      pushTokenRepository: input.pushTokenRepository,
+      logger: input.logger,
+    });
+  }
+}
+
+// Not-qualified activities only: see listPostgresSettlementOutcomeOrders for why this reads the
+// orders instead of trusting one run's results. Null means "unavailable" (no such repository method,
+// or the read failed), and the caller falls back to this run's results.
+async function loadFinalOutcomeOrders(plan, input) {
+  const repository = input.settlementRepository;
+  if (plan.outcome === "qualified" || typeof repository?.listSettlementOutcomeOrders !== "function") {
+    return null;
+  }
+  try {
+    return await repository.listSettlementOutcomeOrders({ activityId: plan.activity?.id });
+  } catch (error) {
+    (input.logger || console).error?.("[push-notification] could not read final settlement outcomes", {
+      activityId: plan.activity?.id,
+      message: error.message,
+    });
+    return null;
+  }
+}
+
 // Every settlement outcome a customer's money depends on, as a list of notifications -- one per
 // distinct message, so each audience gets wording that matches what actually happened to their order:
 //   - qualified            : charged at the discounted price (buildGroupBuyQualifiedNotification)
@@ -379,8 +402,10 @@ function buildGroupBuyQualifiedNotification(plan, results) {
 //   - not qualified, capture : charged at the original price because they opted into that fallback
 //   - capture failed       : the charge was attempted and terminally failed (either outcome)
 // Each audience is built only from this run's actual per-order results, never from `plan` alone, for
-// the same reason as buildGroupBuyQualifiedNotification above. Empty audiences are dropped.
-function buildSettlementNotifications(plan, results) {
+// the same reason as buildGroupBuyQualifiedNotification above. The two not-qualified audiences prefer
+// `finalOrders` (the orders' real end state) when given, so a settlement that took several runs still
+// reaches customers an earlier run already voided or charged. Empty audiences are dropped.
+function buildSettlementNotifications(plan, results, finalOrders = null) {
   const activityTitle = plan.activity?.title || "你參加的團購";
   const activityId = plan.activity?.id;
   const customerByOrderId = new Map((plan.orders || []).map((order) => [order.id, order.customerUserId]));
@@ -391,18 +416,26 @@ function buildSettlementNotifications(plan, results) {
       .filter(Boolean)
   )];
 
+  const uniqueCustomerIds = (orders) => [...new Set(orders.map((order) => order.customerUserId).filter(Boolean))];
+
   const notifications = [];
   if (plan.outcome === "qualified") {
     notifications.push(buildGroupBuyQualifiedNotification(plan, results));
   } else {
     notifications.push({
-      userIds: customerIdsFor((result) => result.action === "void" && result.status === "authorization_voided"),
+      userIds: finalOrders
+        ? uniqueCustomerIds(finalOrders.filter((order) => order.paymentStatus === "authorization_voided"))
+        : customerIdsFor((result) => result.action === "void" && result.status === "authorization_voided"),
       title: "團購未成團",
       body: `${activityTitle}未達成團門檻，已取消預授權，不會扣款`,
       data: { type: "group_buy_not_qualified", activityId },
     });
     notifications.push({
-      userIds: customerIdsFor((result) => result.action === "capture" && result.status === "captured"),
+      userIds: finalOrders
+        ? uniqueCustomerIds(finalOrders.filter((order) => (
+          order.paymentStatus === "captured" && order.fallbackPurchasePreference === "accept_original_price"
+        )))
+        : customerIdsFor((result) => result.action === "capture" && result.status === "captured"),
       title: "團購未達優惠門檻",
       body: `${activityTitle}未達優惠門檻，已依你的設定以原價購買，請留意取貨通知`,
       data: { type: "group_buy_original_price_purchase", activityId },

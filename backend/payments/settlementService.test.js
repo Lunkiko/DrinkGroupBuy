@@ -286,3 +286,62 @@ test("buildSettlementNotifications drops empty audiences", () => {
   const notifications = buildSettlementNotifications(notificationPlan("failed"), []);
   assert.deepEqual(notifications, []);
 });
+
+test("buildSettlementNotifications uses the orders' final state, so customers handled by an earlier retry run are still told", () => {
+  // This run's results only cover order D; A/B were voided and C was charged by an earlier run and
+  // are therefore absent from both `plan` and `results`. They come from finalOrders.
+  const plan = { outcome: "failed", activity: { id: "activity-1", title: "手搖飲團購" }, orders: [{ id: "order-d", customerUserId: "user-d", action: "capture" }] };
+  const results = [{ orderId: "order-d", action: "capture", status: "captured" }];
+  const finalOrders = [
+    { id: "order-a", customerUserId: "user-a", paymentStatus: "authorization_voided", fallbackPurchasePreference: "decline_original_price" },
+    { id: "order-b", customerUserId: "user-b", paymentStatus: "authorization_voided", fallbackPurchasePreference: "decline_original_price" },
+    { id: "order-c", customerUserId: "user-c", paymentStatus: "captured", fallbackPurchasePreference: "accept_original_price" },
+    { id: "order-d", customerUserId: "user-d", paymentStatus: "captured", fallbackPurchasePreference: "accept_original_price" },
+  ];
+
+  const byType = Object.fromEntries(
+    buildSettlementNotifications(plan, results, finalOrders).map((notification) => [notification.data.type, notification])
+  );
+
+  assert.deepEqual(byType.group_buy_not_qualified.userIds, ["user-a", "user-b"]);
+  assert.deepEqual(byType.group_buy_original_price_purchase.userIds, ["user-c", "user-d"]);
+});
+
+test("settleGroupBuyActivity reads final order outcomes for a failed activity and falls back to this run's results if that read fails", async (t) => {
+  const fetchCalls = [];
+  t.mock.method(global, "fetch", async (url, options) => {
+    fetchCalls.push(JSON.parse(options.body)[0]);
+    return { ok: true, status: 200 };
+  });
+  const plan = { activity: { id: "activity-1", title: "手搖飲團購" }, outcome: "failed", orders: [] };
+  const baseRepository = {
+    kind: "postgres",
+    withOperationLock: (lockInput, operation) => operation(),
+    createPlan: async () => plan,
+    completeSettlement: async () => ({ settlement: { id: "settlement-1" }, activity: { ...plan.activity, status: "failed" } }),
+  };
+
+  await settleGroupBuyActivity({
+    activityId: "activity-1",
+    settlementRepository: {
+      ...baseRepository,
+      listSettlementOutcomeOrders: async ({ activityId }) => {
+        assert.equal(activityId, "activity-1");
+        return [{ id: "order-a", customerUserId: "user-a", paymentStatus: "authorization_voided", fallbackPurchasePreference: "decline_original_price" }];
+      },
+    },
+    pushTokenRepository: { getPushTokensForUsers: async (userIds) => userIds.map((id) => `token-${id}`) },
+  });
+  await flushMicrotasks();
+  assert.deepEqual(fetchCalls.map((message) => [message.to, message.data.type]), [["token-user-a", "group_buy_not_qualified"]]);
+
+  fetchCalls.length = 0;
+  await settleGroupBuyActivity({
+    activityId: "activity-1",
+    settlementRepository: { ...baseRepository, listSettlementOutcomeOrders: async () => { throw new Error("db down"); } },
+    pushTokenRepository: { getPushTokensForUsers: async () => ["token-x"] },
+    logger: { error() {} },
+  });
+  await flushMicrotasks();
+  assert.deepEqual(fetchCalls, [], "falls back to this run's (empty) results without throwing");
+});

@@ -441,7 +441,9 @@ async function listDueActivitiesPostgres(database, input = {}) {
 async function claimPickupRemindersPostgres(database, input = {}) {
   const now = input.now || new Date().toISOString();
   const nowTime = Date.parse(now);
-  const leadMs = normalizePositiveInteger(input.leadMinutes, 30) * 60_000;
+  // Fractional minutes are fine (7.5); only a missing / non-positive / non-numeric value uses the default.
+  const leadMinutes = Number(input.leadMinutes);
+  const leadMs = (Number.isFinite(leadMinutes) && leadMinutes > 0 ? leadMinutes : 30) * 60_000;
   if (Number.isNaN(nowTime)) return [];
 
   const activitiesResult = await database.query(`

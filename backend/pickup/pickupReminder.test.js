@@ -105,7 +105,7 @@ test("runDuePickupReminders sends one push per activity group", async (t) => {
     logger: { error() {} }
   });
 
-  assert.deepEqual(summary, { reminderGroupCount: 1, reminderOrderCount: 1 });
+  assert.deepEqual(summary, { reminderGroupCount: 1, reminderOrderCount: 1, undeliveredGroupCount: 0 });
   assert.equal(fetchCalls.length, 1);
   assert.equal(JSON.parse(fetchCalls[0].options.body)[0].data.type, "pickup_closing_soon");
 });
@@ -114,7 +114,7 @@ test("runDuePickupReminders is a no-op when disabled, not Postgres, or push is n
   const pg = fixture().repository;
   const sqlite = { kind: "sqlite", claimPickupReminders: async () => { throw new Error("must not run"); } };
   const push = { getPushTokensForUsers: async () => [] };
-  const empty = { reminderGroupCount: 0, reminderOrderCount: 0 };
+  const empty = { reminderGroupCount: 0, reminderOrderCount: 0, undeliveredGroupCount: 0 };
 
   assert.deepEqual(await runDuePickupReminders({ pickupCredentialRepository: pg, pushTokenRepository: push, leadMinutes: 0 }), empty);
   assert.deepEqual(await runDuePickupReminders({ pickupCredentialRepository: sqlite, pushTokenRepository: push }), empty);
@@ -132,4 +132,52 @@ test("runDuePickupReminders swallows a repository failure instead of throwing", 
 
   assert.equal(summary.error, "column does not exist");
   assert.equal(summary.reminderOrderCount, 0);
+});
+
+test("runDuePickupReminders reports a claimed-but-undelivered group instead of counting it as sent", async (t) => {
+  t.mock.method(global, "fetch", async () => ({ ok: false, status: 503 }));
+  const errors = [];
+  const { repository } = fixture({
+    claimedRows: [{ id: "order-1", activity_id: "activity-a", customer_user_id: "user-1" }]
+  });
+
+  const summary = await runDuePickupReminders({
+    now: "2026-10-04T13:40:00.000Z",
+    pickupCredentialRepository: repository,
+    pushTokenRepository: { getPushTokensForUsers: async () => ["token-1"] },
+    logger: { error: (message, detail) => errors.push({ message, detail }) }
+  });
+
+  assert.equal(summary.undeliveredGroupCount, 1);
+  // pushSender logs its own HTTP error on the same logger; only the reminder's own line is asserted.
+  const undelivered = errors.filter((entry) => /claimed but not delivered/.test(entry.message));
+  assert.equal(undelivered.length, 1);
+  assert.deepEqual(undelivered[0].detail, { activityId: "activity-a", orderCount: 1, reason: "http_503" });
+});
+
+test("runDuePickupReminders does not flag a group with no registered devices as a failure", async (t) => {
+  t.mock.method(global, "fetch", async () => { throw new Error("fetch should not be called"); });
+  const { repository } = fixture({
+    claimedRows: [{ id: "order-1", activity_id: "activity-a", customer_user_id: "user-1" }]
+  });
+
+  const summary = await runDuePickupReminders({
+    now: "2026-10-04T13:40:00.000Z",
+    pickupCredentialRepository: repository,
+    pushTokenRepository: { getPushTokensForUsers: async () => [] },
+    logger: { error() { throw new Error("must not log"); } }
+  });
+
+  assert.equal(summary.reminderOrderCount, 1);
+  assert.equal(summary.undeliveredGroupCount, 0);
+});
+
+test("claimPickupReminders honours a fractional lead time instead of falling back to 30 minutes", async () => {
+  // Window closes 14:00Z. At 13:50Z (10 min left): a 7.5 minute lead must NOT claim, a 12.5 must.
+  const tooEarly = fixture({ claimedRows: [{ id: "o", activity_id: "activity-a", customer_user_id: "u" }] });
+  assert.deepEqual(await tooEarly.repository.claimPickupReminders({ now: "2026-10-04T13:50:00.000Z", leadMinutes: 7.5 }), []);
+
+  const inWindow = fixture({ claimedRows: [{ id: "o", activity_id: "activity-a", customer_user_id: "u" }] });
+  const groups = await inWindow.repository.claimPickupReminders({ now: "2026-10-04T13:50:00.000Z", leadMinutes: 12.5 });
+  assert.equal(groups.length, 1);
 });

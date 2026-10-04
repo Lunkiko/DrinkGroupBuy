@@ -71,27 +71,41 @@ function buildPickupReminderNotification(group) {
 // A no-op unless the repository is Postgres (needs orders.pickup_reminder_sent_at, migration 010)
 // and push is wired. Never throws: a failed reminder must not take the expiration run down with it.
 async function runDuePickupReminders(input = {}) {
+  const none = { reminderGroupCount: 0, reminderOrderCount: 0, undeliveredGroupCount: 0 };
   const repository = input.pickupCredentialRepository;
   const leadMinutes = input.leadMinutes ?? DEFAULT_REMINDER_LEAD_MINUTES;
   if (repository?.kind !== "postgres" || !input.pushTokenRepository || !(leadMinutes > 0)) {
-    return { reminderGroupCount: 0, reminderOrderCount: 0 };
+    return none;
   }
   const logger = input.logger || console;
   try {
     const groups = await repository.claimPickupReminders({ now: input.now, leadMinutes });
+    let undeliveredGroupCount = 0;
     for (const group of groups) {
-      await notifyUsers(buildPickupReminderNotification(group), {
+      const outcome = await notifyUsers(buildPickupReminderNotification(group), {
         pushTokenRepository: input.pushTokenRepository,
         logger
       });
+      // The orders are already claimed (marked reminded) at this point, so a failed send is not
+      // retried -- make it visible instead. "no_recipients" just means nobody in the group has a
+      // registered device, which is normal and not a failure.
+      if (!outcome?.sent && outcome?.reason !== "no_recipients") {
+        undeliveredGroupCount += 1;
+        logger.error?.("[pickup-reminder] reminder claimed but not delivered", {
+          activityId: group.activityId,
+          orderCount: group.orderIds.length,
+          reason: outcome?.reason
+        });
+      }
     }
     return {
       reminderGroupCount: groups.length,
-      reminderOrderCount: groups.reduce((sum, group) => sum + group.orderIds.length, 0)
+      reminderOrderCount: groups.reduce((sum, group) => sum + group.orderIds.length, 0),
+      undeliveredGroupCount
     };
   } catch (error) {
     logger.error?.("[pickup-reminder] run failed", { message: error.message });
-    return { reminderGroupCount: 0, reminderOrderCount: 0, error: error.message };
+    return { ...none, error: error.message };
   }
 }
 

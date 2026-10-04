@@ -26,6 +26,7 @@ function createGroupBuySettlementRepository(input = {}) {
     createPlan: (value) => createPostgresSettlementPlan(database, value),
     getCaptureRetryState: (value) => getPostgresCaptureRetryState(database, value),
     completeSettlement: (value) => completePostgresSettlement(database, value),
+    listSettlementOutcomeOrders: (value) => listPostgresSettlementOutcomeOrders(database, value),
     listDueActivities: (value) => listPostgresDueActivities(database, value),
     enqueueJob: (value) => enqueuePostgresSettlementJob(database, value),
     claimJobs: (value) => claimPostgresSettlementJobs(database, value),
@@ -345,6 +346,28 @@ async function completePostgresSettlement(database, input = {}) {
       activity: { ...mapActivity(activity), status: finalStatus },
     };
   });
+}
+
+// Final per-order money outcome of a settled, NOT-qualified activity, read from the orders
+// themselves rather than from one settlement run's in-memory results. A settlement that needed a
+// retry spreads its work over several runs, and a later run's plan only contains orders that are
+// still 'authorized' or 'captured', so orders an earlier run already voided (or captured) are not in
+// its results -- the notification audience has to come from here to include them. A customer who
+// withdrew has status 'cancelled' and is excluded; settlement's own void leaves status unchanged.
+async function listPostgresSettlementOutcomeOrders(database, input = {}) {
+  const result = await database.query(`
+    SELECT id, customer_user_id, payment_status, fallback_purchase_preference
+    FROM orders
+    WHERE activity_id = $1
+      AND status != 'cancelled'
+      AND payment_status IN ('authorization_voided', 'captured')
+  `, [input.activityId]);
+  return result.rows.map((row) => ({
+    id: row.id,
+    customerUserId: row.customer_user_id,
+    paymentStatus: row.payment_status,
+    fallbackPurchasePreference: row.fallback_purchase_preference,
+  }));
 }
 
 async function listPostgresDueActivities(database, input = {}) {
