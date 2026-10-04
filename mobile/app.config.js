@@ -1,3 +1,12 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
+// Firebase's Android config, needed for push notifications (FCM): without it getExpoPushTokenAsync
+// fails on Android and no device ever registers for pushes. Kept out of Git (see .gitignore) and
+// only wired in when present, so a checkout without it still builds -- just without push.
+const googleServicesFile = path.join(__dirname, "google-services.json");
+const hasGoogleServicesFile = fs.existsSync(googleServicesFile);
+
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 const googleMapsWebApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || googleMapsApiKey;
 const backendBaseUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -48,6 +57,7 @@ module.exports = {
   platforms: ["android", "web"],
   android: {
     package: "com.drinkgroupbuy.prototype",
+    ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
     config: {
       googleMaps: {
         apiKey: googleMapsApiKey

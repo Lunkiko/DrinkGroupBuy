@@ -34,3 +34,6 @@ build/
 
 # PostgreSQL dev backups (contain user emails) -- take with pg_dump -Fc before any migration
 database/backups/*.dump
+
+# Firebase Android config (FCM push). Local file, not committed -- download from Firebase console.
+mobile/google-services.json

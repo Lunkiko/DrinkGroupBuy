@@ -136,6 +136,15 @@ Expo Web is fixed to `http://localhost:8083` in local development so Google OAut
 
 如果你用 Android 實機測試，`localhost` 會指向手機本身，不是電腦。那時要改成電腦區網 IP 或 tunnel URL。
 
+## 推播通知（Android）設定
+
+Android 的推播要靠 Google 的 Firebase Cloud Messaging（FCM）。打包前需要兩樣東西，缺任何一樣，App 都取不到推播 token（程式會靜默略過，不會報錯，只是收不到通知）：
+
+1. `mobile/google-services.json`：到 Firebase 控制台的專案設定 → 你的應用程式 → Android 應用程式（套件名稱 `com.drinkgroupbuy.prototype`）下載，放在 `mobile/` 底下。這個檔案不進 Git（已在 `.gitignore`），`app.config.js` 偵測到檔案才會啟用。
+2. FCM 金鑰：Firebase 專案的服務帳戶私密金鑰，用 `eas credentials` 上傳到 Expo 帳號（互動式指令，Android → Google Service Account → FCM V1）。這是機密，不要放進專案。
+
+這兩項都是原生層設定，改了之後要重新打包 APK，EAS Update 無法讓它生效。本機打包流程：`cd mobile && npx expo prebuild --platform android --no-install`（不要加 `--clean`，會洗掉 `android/app/debug.keystore` 而讓簽章指紋改變、Google 登入失效），再 `cd android && ./gradlew.bat assembleRelease`；輸出在 `android/app/build/outputs/apk/release/app-release.apk`。打包時不要帶 `EXPO_PUBLIC_DEMO_MODE`。
+
 ## 離線展示模式
 
 `EXPO_PUBLIC_DEMO_MODE=true` 會讓 App 完全不連後端：登入頁（樣式與正式版一致）可一鍵以顧客或店家身份進入，菜單、團購、統計、開團、新增飲品、送出訂單都改用 `src/mock/demoContent.js` 與 `src/mock/demoBackend.js` 的假資料，不寫入任何真實資料庫。用途是專題展或試玩時讓人直接操作介面。
