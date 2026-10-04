@@ -37,3 +37,6 @@ database/backups/*.dump
 
 # Firebase Android config (FCM push). Local file, not committed -- download from Firebase console.
 mobile/google-services.json
+
+# Locally built APKs (named by build date, see scripts/build-android-apk.js)
+mobile/apk/

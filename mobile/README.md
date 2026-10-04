@@ -143,7 +143,7 @@ Android 的推播要靠 Google 的 Firebase Cloud Messaging（FCM）。打包前
 1. `mobile/google-services.json`：到 Firebase 控制台的專案設定 → 你的應用程式 → Android 應用程式（套件名稱 `com.drinkgroupbuy.prototype`）下載，放在 `mobile/` 底下。這個檔案不進 Git（已在 `.gitignore`），`app.config.js` 偵測到檔案才會啟用。
 2. FCM 金鑰：Firebase 專案的服務帳戶私密金鑰，用 `eas credentials` 上傳到 Expo 帳號（互動式指令，Android → Google Service Account → FCM V1）。這是機密，不要放進專案。
 
-這兩項都是原生層設定，改了之後要重新打包 APK，EAS Update 無法讓它生效。本機打包流程：`cd mobile && npx expo prebuild --platform android --no-install`（不要加 `--clean`，會洗掉 `android/app/debug.keystore` 而讓簽章指紋改變、Google 登入失效），再 `cd android && ./gradlew.bat assembleRelease`；輸出在 `android/app/build/outputs/apk/release/app-release.apk`。打包時不要帶 `EXPO_PUBLIC_DEMO_MODE`。
+這兩項都是原生層設定，改了之後要重新打包 APK，EAS Update 無法讓它生效。本機打包用專案根目錄的 `npm run mobile:apk`：它會依序做 `expo prebuild`（刻意不加 `--clean`，那會洗掉 `android/app/debug.keystore` 而讓簽章指紋改變、Google 登入失效）、`gradlew assembleRelease`，然後把成品另存成**當天月日命名**的檔案 `mobile/apk/MMDD.apk`（例如 10 月 4 日是 `mobile/apk/1004.apk`）。同一天再打包會覆蓋同名檔。只想把上次打包好的檔案改名，用 `npm run mobile:apk -- --copy-only`。原始輸出仍在 `android/app/build/outputs/apk/release/app-release.apk`。腳本偵測到 shell 設了 `EXPO_PUBLIC_DEMO_MODE` 會拒絕打包。
 
 ## 離線展示模式
 
