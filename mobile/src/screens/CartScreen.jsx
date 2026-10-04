@@ -213,6 +213,8 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
               // No real LINE Pay to authorize against -- this existing local-only action (built for
               // early prototyping, before the real LINE Pay integration) marks the order paid
               // directly, so demo mode can skip the payment screen and still show a completed order.
+              // A brand-new order was already authorized inside submitCart; this re-applies the same
+              // state (a no-op for it) and covers a revised or updated existing order.
               actions.authorizeLinePayPayment(orderId);
               // "customerOrders" lives in OrdersStack, a sibling tab's nested stack (CustomerTabs.jsx)
               // -- not reachable with push(), which only targets the current stack (cart is in

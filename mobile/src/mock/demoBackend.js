@@ -121,6 +121,11 @@ export function redeemDemoPickupCredential(code) {
     error.status = 404;
     throw error;
   }
+  if (entry.status === "redeemed") {
+    const error = new Error("這組取餐碼已經核銷過了。");
+    error.status = 409;
+    throw error;
+  }
   entry.status = "redeemed";
   return {
     credential: {

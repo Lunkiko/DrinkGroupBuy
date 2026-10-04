@@ -492,7 +492,8 @@ function createStoreOverlayMarker({ colors, googleMaps, map, position, title, pi
       pin.style.background = "transparent";
       pin.style.padding = "0";
       pin.style.cursor = this.onPress ? "pointer" : "default";
-      pin.style.pointerEvents = "auto";
+      // An inert pin (the customer's own position) must not swallow map drags that start on it.
+      pin.style.pointerEvents = this.onPress ? "auto" : "none";
 
       const svg = document.createElementNS(SVG_NS, "svg");
       svg.setAttribute("viewBox", "0 0 24 34");

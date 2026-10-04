@@ -617,6 +617,12 @@ export function AppStateProvider({ children }) {
           note: "Line Pay authorization prototype."
         }
       ]);
+      // Demo mode has no payment screen: authorize here, where the new order object is at hand. Doing it
+      // from CartScreen after this call returns would read a stale `orders` that lacks the order, leaving
+      // the activity's cup count unchanged and the cart uncleared.
+      if (isDemoMode()) {
+        actionsRef.current.authorizeLinePayPayment(orderId, "linepay-auth", newOrder);
+      }
       return orderId;
     },
     async updateOrderItems(orderId, nextItems) {
@@ -745,8 +751,13 @@ export function AppStateProvider({ children }) {
         )));
       }
     },
-    authorizeLinePayPayment(orderId, providerReference = "linepay-auth") {
-      const orderToAuthorize = orders.find((order) => order.id === orderId);
+    // `knownOrder` is for a caller that has just created the order in this same tick: `orders` here is
+    // the snapshot from the last render, which does not contain it yet.
+    authorizeLinePayPayment(orderId, providerReference = "linepay-auth", knownOrder = null) {
+      const orderToAuthorize = knownOrder ?? orders.find((order) => order.id === orderId);
+      // Only the demo checkout calls this. Not finding the order means submitCart already authorized it
+      // (see the knownOrder call there); re-running would reset its discountStatus to not_yet_qualified.
+      if (!orderToAuthorize) return;
       const groupBuyActivityToAuthorize = orderToAuthorize ? groupBuyActivities.find((groupBuyActivity) => groupBuyActivity.id === orderToAuthorize.groupBuyActivityId) : null;
       const willQualify = Boolean(
         orderToAuthorize &&
