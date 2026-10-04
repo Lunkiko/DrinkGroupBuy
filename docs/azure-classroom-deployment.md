@@ -5,7 +5,7 @@
 ## 目前狀態（2026-09-11）
 
 - **已建立**：Azure 資源群組 `drinkgroupbuy-demo-rg`、PostgreSQL Flexible Server `drinkgroupbuy-demo-hc`、App Service `drinkgroupbuy-demo-api`。
-- **已完成**：資料庫 migration（目前版本 007）已套用；PostgreSQL 防火牆已開放給 App Service（讀寫資料庫的 API 已驗證回應正常）；App Service 環境變數已設定（PostgreSQL 連線、`AUTH_SESSION_SECRET`、`ADMIN_WEB_PASSWORDS`、各 `*_RUNTIME` 等）；Backend 已部署（`GET /health` 與需要資料庫的 API 皆已驗證回應正常）。
+- **已完成**：資料庫 migration（目前版本 010，2026-10-04 套用）已套用；PostgreSQL 防火牆已開放給 App Service（讀寫資料庫的 API 已驗證回應正常）；App Service 環境變數已設定（PostgreSQL 連線、`AUTH_SESSION_SECRET`、`ADMIN_WEB_PASSWORDS`、各 `*_RUNTIME` 等）；Backend 已部署（`GET /health` 與需要資料庫的 API 皆已驗證回應正常）。
 - **已建立但僅供內部測試**：Android APK 已重新打包，使用 Debug Key 簽署（不是正式上架用的簽署金鑰），已設定連到 Azure 這個公開 HTTPS 網址；發布版（release）建置，JS 程式碼包在檔案裡，不需要連著開發電腦就能獨立執行。
 - **已完成**：Firebase／Google Cloud Console 的 Android OAuth 用戶端 SHA-1 已直接用工具驗證跟這版 APK 簽章一致；在真的 Android 手機用真的 Google 帳號，實際走過一次「登入 → 自動註冊為顧客」的完整流程，並用真實姓名顯示＋資料庫帳號 ID 格式兩項證據交叉確認過是真的全新註冊，不是誤判；App Service 環境變數已確認包含 `FIREBASE_PROJECT_ID`／`FIREBASE_SERVICE_ACCOUNT_JSON`。
 - **⚠️ 已偏離下方「安全起始值」範本**：使用者要求課堂展示環境的開團／下單／付款／時間到期結算都要跟正式版行為一致，2026-09-11 已開啟 `SETTLEMENT_SCHEDULER_ENABLED`、`PAYMENT_RECONCILIATION_ENABLED`（連同 `PAYMENT_RECONCILIATION_ALLOW_PRODUCTION`，因為這個判斷的是 `NODE_ENV` 不是金流環境）、`PICKUP_EXPIRATION_SCHEDULER_ENABLED`，並補上 LINE Pay sandbox 真實憑證與指向 Azure 網址的 `LINE_PAY_CONFIRM_URL`／`LINE_PAY_CANCEL_URL`——**LINE Pay sandbox 付款路徑現在是真的會被呼叫**，不再是「不測付款路徑」的狀態；`LINE_PAY_ENV` 仍維持 `sandbox`，沒有開真實金流。之後如果要重新部署或建立第二套環境，不要照抄下方範本的 `false`，要參照這裡目前的真實狀態。詳見 `docs/AI-security-review-log.md` 2026-09-11 第四次追加。
