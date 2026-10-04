@@ -58,7 +58,7 @@ function createMerchantGroupBuyActivityCancelRepository(input = {}) {
 
 async function getPostgresActivityForCancellation(database, input = {}) {
   const result = await database.query(`
-    SELECT id, store_id, status, deadline_at, withdrawal_lock_minutes, cancellation_reason
+    SELECT id, store_id, title, status, deadline_at, withdrawal_lock_minutes, cancellation_reason
     FROM group_buy_activities
     WHERE id = $1
   `, [input.activityId]);
@@ -69,6 +69,7 @@ async function listPostgresEligibleOrders(database, input = {}) {
   const result = await database.query(`
     SELECT
       orders.id,
+      orders.customer_user_id,
       orders.payment_status,
       payment_auth.provider AS payment_provider
     FROM orders

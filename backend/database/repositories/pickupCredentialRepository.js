@@ -35,6 +35,8 @@ function createPickupCredentialRepository(input = {}) {
       redeemCode: async (value) => gateway.redeemCode(value),
       listDueActivities: async (value) => gateway.listDueActivities(value),
       expireWindow: async (value) => gateway.expireWindow(value),
+      // Pickup reminders are Postgres-only (they need orders.pickup_reminder_sent_at, migration 010).
+      claimPickupReminders: async () => [],
       close: async () => {},
     };
   }
@@ -49,6 +51,7 @@ function createPickupCredentialRepository(input = {}) {
     redeemCode: (value) => redeemCodePostgres(database, value),
     listDueActivities: (value) => listDueActivitiesPostgres(database, value),
     expireWindow: (value) => expireWindowPostgres(database, value),
+    claimPickupReminders: (value) => claimPickupRemindersPostgres(database, value),
     withOperationLock: (value, operation) => withPostgresPickupOperationLock(database, value, operation),
     close: async () => {
       if (ownsDatabase) await database.close();
@@ -428,6 +431,54 @@ async function listDueActivitiesPostgres(database, input = {}) {
     .sort((left, right) => left.expiresTime - right.expiresTime)
     .slice(0, limit)
     .map(({ expiresTime, ...activity }) => activity);
+}
+
+// Claims, in one UPDATE, every ready-but-not-yet-picked-up order whose pickup window closes within
+// `leadMinutes`, and returns them grouped by activity for the caller to notify. The claim
+// (pickup_reminder_sent_at IS NULL -> now) is the dedup: two scheduler runs or two app instances can
+// never both get the same order. The trade-off is at-most-once -- if the push call that follows fails,
+// that order is not reminded again, which is acceptable for a convenience reminder.
+async function claimPickupRemindersPostgres(database, input = {}) {
+  const now = input.now || new Date().toISOString();
+  const nowTime = Date.parse(now);
+  const leadMs = normalizePositiveInteger(input.leadMinutes, 30) * 60_000;
+  if (Number.isNaN(nowTime)) return [];
+
+  const activitiesResult = await database.query(`
+    SELECT activity.id, activity.title, activity.pickup_start_at, activity.pickup_end_at,
+      store.name AS store_name
+    FROM group_buy_activities activity
+    JOIN stores store ON store.id = activity.store_id
+    WHERE activity.status IN ('ordering', 'ready_for_pickup')
+  `);
+  const closingSoonByActivityId = new Map();
+  for (const row of activitiesResult.rows) {
+    const expiresAt = calculatePickupExpirationAt(toIsoString(row.pickup_start_at), toIsoString(row.pickup_end_at));
+    const expiresTime = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+    if (Number.isNaN(expiresTime) || expiresTime <= nowTime || expiresTime - nowTime > leadMs) continue;
+    closingSoonByActivityId.set(row.id, { activityId: row.id, title: row.title, storeName: row.store_name, expiresAt });
+  }
+  if (closingSoonByActivityId.size === 0) return [];
+
+  const claimed = await database.query(`
+    UPDATE orders
+    SET pickup_reminder_sent_at = $1
+    WHERE activity_id = ANY($2::text[])
+      AND status != 'cancelled'
+      AND pickup_status = 'ready'
+      AND pickup_reminder_sent_at IS NULL
+    RETURNING id, activity_id, customer_user_id
+  `, [now, [...closingSoonByActivityId.keys()]]);
+
+  const groups = new Map();
+  for (const row of claimed.rows) {
+    const group = groups.get(row.activity_id)
+      || { ...closingSoonByActivityId.get(row.activity_id), orderIds: [], customerUserIds: [] };
+    group.orderIds.push(row.id);
+    if (!group.customerUserIds.includes(row.customer_user_id)) group.customerUserIds.push(row.customer_user_id);
+    groups.set(row.activity_id, group);
+  }
+  return [...groups.values()];
 }
 
 async function expireWindowPostgres(database, input = {}) {

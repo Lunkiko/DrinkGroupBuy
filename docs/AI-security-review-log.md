@@ -1493,3 +1493,33 @@
 
 **這次沒審查到／沒驗證到的部分**：手機 App 原生建置內使用展示模式的行為沒有驗證；Expo 開發伺服器對外暴露的完整端點清單沒有逐一檢查（見上表第一列）。
 
+---
+
+## 2026-10-04 — 顧客端推播擴充：未成團／原價購買／請款失敗／團購取消／取餐截止提醒
+
+**範圍**：`backend/payments/settlementService.js`（`buildSettlementNotifications` 與結算後的發送迴圈）、`backend/payments/merchantActivityCancelService.js`（取消團購後通知）與 `merchantGroupBuyActivityCancelRepository.js`（查詢多帶 `customer_user_id`、`title`）、`backend/pickup/expirationService.js`（取餐截止提醒排程）與 `pickupCredentialRepository.js`（`claimPickupRemindersPostgres`）、`backend/server.js`（三個取消入口與排程的接線）、`database/migrations/010_order_pickup_reminder_postgres.sql`（`orders.pickup_reminder_sent_at`）。
+**觸發原因**：AGENTS.md 規則——改動接在金流結算與團購取消流程旁（通知文案會對顧客說「不會扣款」「已依原價購買」「扣款失敗」，講錯會誤導顧客對自己的錢的認知），且新增資料庫欄位與排程。呼應 2026-09-30 同主題那筆（顧客端推播第一版，只有成團與可取餐兩種）：延續它的設計（失敗不拋例外、結算重試不重送），這次補上它沒涵蓋的結果。
+**方法**：聚焦複查這次 diff，不是整個 branch 掃描。追每個通知「對象從哪來」「說的話是否與實際狀態一致」「會不會重複發」「失敗會不會拖垮核心流程」。對真實 PostgreSQL（本機開發伺服器上一個一次性 schema，跑完整套 migration 001–010 後驗證，結束後整個 schema 已刪除，開發資料庫本身沒有被讀寫）驗證新 SQL。
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 低 | `pickupCredentialRepository.js` `claimPickupRemindersPostgres` | 提醒採「先認領再發送」（至多一次）：認領後若 Expo 推播呼叫失敗，該筆訂單不會再被提醒 | 提醒屬方便性功能，漏發的代價是顧客少一次提醒、不影響訂單或金額；若之後要補強，需另加發送結果欄位與重試，會增加複雜度 | 評估後不修（刻意取捨，已寫在程式註解） |
+| 低 | 部署順序 | 取餐提醒需要 migration 010；若程式先於 migration 上線，只有在「有取餐窗口剛好進入最後 30 分鐘」時那條 `UPDATE` 會因欄位不存在而失敗，錯誤被 `runDuePickupReminders` 接住並記錄，**不影響取餐逾期處理、結算、取消等核心流程** | 部署時先套 migration 010（Azure 資料庫要套 009、010；本機開發資料庫已於 10/4 套到 010） | 待處理（Azure 部署步驟，非程式缺陷） |
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| 通知對象能否被操弄 | 所有對象都來自資料庫列（結算 `plan.orders[].customerUserId`、取消 `listEligibleOrders` 的 `customer_user_id`、提醒 `UPDATE ... RETURNING customer_user_id`），再由 `pushTokenRepository.getPushTokensForUsers` 用使用者編號查裝置；沒有任何一條路徑接受 request body 裡的收件人或裝置 token。商家／管理員取消入口在發送前已通過原本的 `canManageStore` 授權 |
+| 文案與實際狀態一致（金流相關） | 「不會扣款」只寄給「這次實際取消成功」的訂單（取消流程的 `cancelledOrderIds`；作廢失敗的訂單在 `failedOrderIds`，不通知）；已請款（captured／refunded）訂單依原有 `listEligibleOrders` 條件根本不在名單內，不會被告知「不會扣款」。結算的「未成團」只寄給 `void` 且結果為 `authorization_voided` 的訂單、「原價購買」只寄給 `capture` 且結果為 `captured` 的訂單、「扣款失敗」只寄給 `capture` 且結果為 `failed` 的訂單，全部以本輪實際結果為準，不是 `plan` 的預期動作 |
+| 重複發送 | 結算：沿用原本「`!completion.error && !completion.alreadyCompleted` 才發」的守門，重試遇到已完成的結算不重送；取消：已取消的活動在更早的冪等分支就回傳，不會走到通知；提醒：認領本身（`pickup_reminder_sent_at IS NULL` → 現在）就是去重，兩個排程或兩個實例同時跑，PostgreSQL 的列鎖會讓後到者重新判斷條件後拿不到同一筆。真實 PostgreSQL 驗證：第一次認領 2 筆、第二次 0 筆 |
+| 失敗隔離 | 結算與取消的發送都不 `await`，`notifyUsers` 本身不拋例外，外層另有 `.catch` 記錄；提醒整段包在 `try/catch`，失敗只回傳摘要。日誌只含活動編號、通知類型與錯誤訊息，不含推播 token 或顧客資料 |
+| SQL 安全 | 新 SQL 全為參數化（`$1`、`ANY($2::text[])`），沒有字串拼接使用者輸入；`npm run check:sql-safety` 通過 |
+| 資料外洩 | 推播內容只有活動標題、店名、取餐截止時間，都是顧客本來就看得到的資訊；內容不含金額、訂單編號或個資（`data` 只放通知類型與活動編號） |
+| 權限／後端改動範圍 | 沒有新增 HTTP 路由、沒有改任何授權或金額計算；LINE Pay 請款與作廢邏輯本身未修改，只讀取它們的結果來決定要通知誰 |
+| 自動化測試 | `npm test` 252/252 通過（新增 14 項：結算三種通知對象、取消通知對象與冪等、提醒認領 SQL／時間窗／去重／降級）；現有結算通知測試也依新行為更新 |
+
+**這次沒審查到／沒驗證到的部分**：推播實際送達裝置（前景／背景／App 關閉）沒有驗證，仍需要重新打包 APK 後在真機測；migration 009、010 已於同日套用到本機開發資料庫（套用前 `pg_dump` 備份、前後筆數一致），Azure 資料庫尚未套用；已請款訂單在「管理員無條件取消」情境下仍不會收到任何通知（它們不在取消名單內，退款維持走獨立退款流程），這是這次範圍外的已知缺口。
+

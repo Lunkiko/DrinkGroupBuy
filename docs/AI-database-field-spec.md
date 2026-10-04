@@ -245,6 +245,7 @@ PostgreSQL 直接連結 `store_id`，不保存舊 SQLite 相容 schema 的 `merc
 | 12  | `pickup_status`                | 取貨狀態       | TEXT    |           | `not_ready`, `ready`, `picked_up`, `cancelled`, `expired`                         | `ready`                     |
 | 13  | `submitted_at`                 | 送出時間       | timestamptz |           | ISO 8601 日期時間                                                                 | `2026-06-25T10:15:00+08:00` |
 | 14  | `updated_at`                   | 更新時間       | timestamptz |           | ISO 8601 日期時間                                                                 | `2026-06-25T10:30:00+08:00` |
+| 15  | `pickup_reminder_sent_at`      | 取餐提醒推播時間 | timestamptz |           | 可為 NULL＝尚未推播取餐截止提醒；僅 PostgreSQL（`010_order_pickup_reminder_postgres.sql`）。取餐排程以單一 `UPDATE ... WHERE pickup_reminder_sent_at IS NULL ... RETURNING` 認領訂單，認領即去重，每筆訂單最多提醒一次 | `2026-10-04T21:30:00+08:00` |
 
 ## `order_rule_consents`
 

@@ -341,6 +341,11 @@ const customerSavingsRepository = createCustomerSavingsRepository({});
 const merchantStatisticsRepository = createMerchantStatisticsRepository({});
 // Postgres-only: no SQLite install has ever needed push notifications.
 const pushTokenRepository = createPushTokenRepository({});
+// The cancel notification needs each order's customer_user_id, which only the Postgres
+// listEligibleOrders returns -- so it is wired the same way the other push call sites are.
+const activityCancelPushTokenRepository = merchantGroupBuyActivityCancelRepository.kind === "postgres"
+  ? pushTokenRepository
+  : undefined;
 const orderRevisionRepository = createOrderRevisionRepository({
   sqliteGateway: {
     createRevision: (value) => createOrderRevision(value),
@@ -988,7 +993,8 @@ const server = http.createServer(async (request, response) => {
           now: businessClock.nowIso(),
           canManageStore: (storeId) => canManageStore(authUser, storeId),
           merchantGroupBuyActivityCancelRepository,
-          paymentAuthorizationCancelRepository
+          paymentAuthorizationCancelRepository,
+          pushTokenRepository: activityCancelPushTokenRepository
         });
         if (result.error) {
           const statusByError = {
@@ -1962,7 +1968,8 @@ const server = http.createServer(async (request, response) => {
           actionType: "admin_cancel_group_buy_activity",
           unconditional: true,
           merchantGroupBuyActivityCancelRepository,
-          paymentAuthorizationCancelRepository
+          paymentAuthorizationCancelRepository,
+          pushTokenRepository: activityCancelPushTokenRepository
         });
         if (result.error) {
           const statusByError = {
@@ -2427,7 +2434,8 @@ const server = http.createServer(async (request, response) => {
           actionType: "admin_cancel_group_buy_activity",
           unconditional: true,
           merchantGroupBuyActivityCancelRepository,
-          paymentAuthorizationCancelRepository
+          paymentAuthorizationCancelRepository,
+          pushTokenRepository: activityCancelPushTokenRepository
         });
         // A non-empty failedOrderIds means the activity itself cancelled but some orders' LINE
         // Pay void calls failed (result has no top-level `.error` for this case) -- must
@@ -2796,7 +2804,8 @@ server.listen(port, () => {
   pickupExpirationScheduler = startPickupExpirationScheduler({
     env: schedulerEnvironment,
     nowProvider: () => businessClock.nowIso(),
-    pickupCredentialRepository: pickupPostgresReady ? pickupCredentialRepository : undefined
+    pickupCredentialRepository: pickupPostgresReady ? pickupCredentialRepository : undefined,
+    pushTokenRepository: pickupPostgresReady ? pushTokenRepository : undefined
   });
   if (pickupExpirationScheduler.enabled) {
     console.log(`Pickup expiration scheduler enabled (${pickupExpirationScheduler.intervalMs}ms interval)`);

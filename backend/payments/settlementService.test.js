@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { settleGroupBuyActivity, buildGroupBuyQualifiedNotification } = require("./settlementService");
+const { settleGroupBuyActivity, buildGroupBuyQualifiedNotification, buildSettlementNotifications } = require("./settlementService");
 
 // The notification call is deliberately fire-and-forget (not awaited) so a slow/unavailable Expo
 // push API can't add latency to the settlement caller's response -- see settlementService.js's
@@ -145,19 +145,29 @@ test("settleGroupBuyActivity does not notify a customer whose order's capture te
     activityId: "activity-1",
     settlementRepository,
     paymentCaptureRepository,
+    // Each distinct message looks up its own audience: the paid customer hears "qualified", the one
+    // whose capture failed hears "capture failed" -- and never the other way round.
     pushTokenRepository: {
       getPushTokensForUsers: async (userIds) => {
-        assert.deepEqual(userIds, ["user-paid"]);
-        return ["token-a"];
+        if (userIds.includes("user-paid")) {
+          assert.deepEqual(userIds, ["user-paid"]);
+          return ["token-paid"];
+        }
+        assert.deepEqual(userIds, ["user-declined"]);
+        return ["token-declined"];
       },
     },
   });
   await flushMicrotasks();
 
   assert.equal(result.error, undefined);
-  assert.equal(fetchCalls.length, 1);
-  const messages = JSON.parse(fetchCalls[0].options.body);
-  assert.deepEqual(messages.map((message) => message.to), ["token-a"]);
+  assert.equal(fetchCalls.length, 2);
+  const messagesByType = Object.fromEntries(fetchCalls.map((call) => {
+    const [message] = JSON.parse(call.options.body);
+    return [message.data.type, message];
+  }));
+  assert.equal(messagesByType.group_buy_qualified.to, "token-paid");
+  assert.equal(messagesByType.payment_capture_failed.to, "token-declined");
 });
 
 test("settleGroupBuyActivity does not notify when a retried job finds the settlement already completed", async (t) => {
@@ -189,7 +199,7 @@ test("settleGroupBuyActivity does not notify when a retried job finds the settle
   assert.equal(fetchMock.mock.callCount(), 0);
 });
 
-test("settleGroupBuyActivity does not notify when the activity failed to reach its threshold", async (t) => {
+test("settleGroupBuyActivity sends nothing when a failed activity has no voided, original-price or failed-capture orders", async (t) => {
   const fetchMock = t.mock.method(global, "fetch", async () => {
     throw new Error("fetch should not be called");
   });
@@ -218,4 +228,61 @@ test("settleGroupBuyActivity does not notify when the activity failed to reach i
   await flushMicrotasks();
 
   assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+
+const notificationPlan = (outcome) => ({
+  outcome,
+  activity: { id: "activity-1", title: "手搖飲團購" },
+  orders: [
+    { id: "order-void-1", customerUserId: "user-void-1", action: "void" },
+    { id: "order-void-2", customerUserId: "user-void-1", action: "void" },
+    { id: "order-original", customerUserId: "user-original", action: "capture" },
+    { id: "order-failed", customerUserId: "user-failed", action: "capture" },
+    { id: "order-paid-earlier", customerUserId: "user-paid-earlier", action: "already_captured" },
+  ],
+});
+
+test("buildSettlementNotifications tells voided customers 'not charged' and fallback buyers 'bought at original price' when the group fails", () => {
+  const results = [
+    { orderId: "order-void-1", action: "void", status: "authorization_voided" },
+    { orderId: "order-void-2", action: "void", status: "authorization_voided" },
+    { orderId: "order-original", action: "capture", status: "captured" },
+    { orderId: "order-failed", action: "capture", status: "failed" },
+    { orderId: "order-paid-earlier", action: "already_captured", status: "skipped" },
+  ];
+
+  const notifications = buildSettlementNotifications(notificationPlan("failed"), results);
+  const byType = Object.fromEntries(notifications.map((notification) => [notification.data.type, notification]));
+
+  assert.deepEqual(Object.keys(byType).sort(), [
+    "group_buy_not_qualified",
+    "group_buy_original_price_purchase",
+    "payment_capture_failed",
+  ]);
+  assert.deepEqual(byType.group_buy_not_qualified.userIds, ["user-void-1"]);
+  assert.match(byType.group_buy_not_qualified.body, /不會扣款/);
+  assert.deepEqual(byType.group_buy_original_price_purchase.userIds, ["user-original"]);
+  assert.deepEqual(byType.payment_capture_failed.userIds, ["user-failed"]);
+  assert.ok(!byType.group_buy_qualified, "a failed group must never say it qualified");
+});
+
+test("buildSettlementNotifications for a qualified group sends the qualified message and a separate capture-failure message", () => {
+  const results = [
+    { orderId: "order-original", action: "capture", status: "captured" },
+    { orderId: "order-failed", action: "capture", status: "failed" },
+    { orderId: "order-paid-earlier", action: "already_captured", status: "skipped" },
+  ];
+
+  const notifications = buildSettlementNotifications(notificationPlan("qualified"), results);
+  const byType = Object.fromEntries(notifications.map((notification) => [notification.data.type, notification]));
+
+  assert.deepEqual(byType.group_buy_qualified.userIds.sort(), ["user-original", "user-paid-earlier"]);
+  assert.deepEqual(byType.payment_capture_failed.userIds, ["user-failed"]);
+  assert.ok(!byType.group_buy_not_qualified && !byType.group_buy_original_price_purchase);
+});
+
+test("buildSettlementNotifications drops empty audiences", () => {
+  const notifications = buildSettlementNotifications(notificationPlan("failed"), []);
+  assert.deepEqual(notifications, []);
 });

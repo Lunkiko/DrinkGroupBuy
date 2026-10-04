@@ -315,16 +315,19 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
   // finds the settlement already recorded (completion.alreadyCompleted) already sent this once.
   // Not awaited: notifyUsers never throws (see pushSender.js), and the merchant/admin waiting on
   // this settlement's HTTP response shouldn't be blocked on an Expo push round-trip (up to 5s).
-  if (plan.outcome === "qualified" && !completion?.error && !completion?.alreadyCompleted) {
-    notifyUsers(buildGroupBuyQualifiedNotification(plan, results), {
-      pushTokenRepository: input.pushTokenRepository,
-      logger: input.logger,
-    }).catch((error) => {
-      (input.logger || console).error?.("[push-notification] failed to notify group buy qualified", {
-        activityId,
-        message: error.message,
+  if (!completion?.error && !completion?.alreadyCompleted) {
+    for (const notification of buildSettlementNotifications(plan, results)) {
+      notifyUsers(notification, {
+        pushTokenRepository: input.pushTokenRepository,
+        logger: input.logger,
+      }).catch((error) => {
+        (input.logger || console).error?.("[push-notification] failed to notify settlement outcome", {
+          activityId,
+          type: notification.data?.type,
+          message: error.message,
+        });
       });
-    });
+    }
   }
 
   return {
@@ -367,6 +370,51 @@ function buildGroupBuyQualifiedNotification(plan, results) {
     body: `${plan.activity?.title || "你參加的團購"}已達成團門檻，請留意取貨通知`,
     data: { type: "group_buy_qualified", activityId: plan.activity?.id },
   };
+}
+
+// Every settlement outcome a customer's money depends on, as a list of notifications -- one per
+// distinct message, so each audience gets wording that matches what actually happened to their order:
+//   - qualified            : charged at the discounted price (buildGroupBuyQualifiedNotification)
+//   - not qualified, void  : pre-authorization released, never charged
+//   - not qualified, capture : charged at the original price because they opted into that fallback
+//   - capture failed       : the charge was attempted and terminally failed (either outcome)
+// Each audience is built only from this run's actual per-order results, never from `plan` alone, for
+// the same reason as buildGroupBuyQualifiedNotification above. Empty audiences are dropped.
+function buildSettlementNotifications(plan, results) {
+  const activityTitle = plan.activity?.title || "你參加的團購";
+  const activityId = plan.activity?.id;
+  const customerByOrderId = new Map((plan.orders || []).map((order) => [order.id, order.customerUserId]));
+  const customerIdsFor = (matchesResult) => [...new Set(
+    (results || [])
+      .filter(matchesResult)
+      .map((result) => customerByOrderId.get(result.orderId))
+      .filter(Boolean)
+  )];
+
+  const notifications = [];
+  if (plan.outcome === "qualified") {
+    notifications.push(buildGroupBuyQualifiedNotification(plan, results));
+  } else {
+    notifications.push({
+      userIds: customerIdsFor((result) => result.action === "void" && result.status === "authorization_voided"),
+      title: "團購未成團",
+      body: `${activityTitle}未達成團門檻，已取消預授權，不會扣款`,
+      data: { type: "group_buy_not_qualified", activityId },
+    });
+    notifications.push({
+      userIds: customerIdsFor((result) => result.action === "capture" && result.status === "captured"),
+      title: "團購未達優惠門檻",
+      body: `${activityTitle}未達優惠門檻，已依你的設定以原價購買，請留意取貨通知`,
+      data: { type: "group_buy_original_price_purchase", activityId },
+    });
+  }
+  notifications.push({
+    userIds: customerIdsFor((result) => result.action === "capture" && result.status === "failed"),
+    title: "訂單扣款失敗",
+    body: `${activityTitle}的訂單扣款失敗，請到「我的訂單」查看並處理`,
+    data: { type: "payment_capture_failed", activityId },
+  });
+  return notifications.filter((notification) => notification.userIds.length > 0);
 }
 
 function createTerminalCaptureFailureResult(order, retryState, reason) {
@@ -617,5 +665,6 @@ module.exports = {
   runDueGroupBuySettlementJobs,
   startDeadlineSettlementScheduler,
   settleGroupBuyActivity,
-  buildGroupBuyQualifiedNotification
+  buildGroupBuyQualifiedNotification,
+  buildSettlementNotifications
 };

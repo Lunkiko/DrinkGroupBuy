@@ -1,4 +1,5 @@
 const { voidLinePayAuthorization } = require("./linePayService");
+const { notifyUsers } = require("../notifications/pushSender");
 
 const ACTIVITY_LOCK_MINUTES_DEFAULT = 30;
 const ORDER_LOCK_LEASE_MS = 300_000;
@@ -124,6 +125,25 @@ async function cancelMerchantGroupBuyActivity(input = {}) {
     actionType: input.actionType || "merchant_cancel_group_buy_activity"
   });
 
+  // Not awaited: notifyUsers never throws (see ../notifications/pushSender.js), and the merchant or
+  // admin waiting on this cancellation shouldn't be blocked on an Expo push round-trip. Only orders
+  // that were really cancelled are told "no charge" -- an order whose void failed (failedOrderIds)
+  // may still hold an authorization, so it gets no message rather than a wrong one.
+  if (!activityResult?.error) {
+    const notification = buildActivityCancelledNotification({ activity, eligibleOrders, cancelledOrderIds });
+    if (notification.userIds.length > 0) {
+      notifyUsers(notification, {
+        pushTokenRepository: input.pushTokenRepository,
+        logger
+      }).catch((error) => {
+        logger.error?.("[push-notification] failed to notify group buy cancelled", {
+          activityId: input.activityId,
+          message: error.message
+        });
+      });
+    }
+  }
+
   return {
     activity: activityResult,
     cancelledOrderIds,
@@ -132,6 +152,26 @@ async function cancelMerchantGroupBuyActivity(input = {}) {
   };
 }
 
+// Pure and side-effect-free so the audience and wording are unit-testable without a database or
+// the Expo push call. Orders that already captured payment never reach `eligibleOrders` (see
+// listEligibleOrders), so this never claims "no charge" to someone who was charged.
+function buildActivityCancelledNotification({ activity, eligibleOrders, cancelledOrderIds }) {
+  const cancelled = new Set(cancelledOrderIds);
+  const userIds = [...new Set(
+    eligibleOrders
+      .filter((order) => cancelled.has(order.id))
+      .map((order) => order.customer_user_id)
+      .filter(Boolean)
+  )];
+  return {
+    userIds,
+    title: "團購已取消",
+    body: `${activity.title || "你參加的團購"}已被取消，你的訂單不會扣款`,
+    data: { type: "group_buy_cancelled", activityId: activity.id }
+  };
+}
+
 module.exports = {
-  cancelMerchantGroupBuyActivity
+  cancelMerchantGroupBuyActivity,
+  buildActivityCancelledNotification
 };

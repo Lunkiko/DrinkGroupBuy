@@ -31,3 +31,6 @@ build/
 
 # Local system-analysis documents and blueprint images
 /system-analysis/
+
+# PostgreSQL dev backups (contain user emails) -- take with pg_dump -Fc before any migration
+database/backups/*.dump
