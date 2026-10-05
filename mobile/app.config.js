@@ -47,7 +47,7 @@ module.exports = {
   // is a native setting, so it only takes effect in the next native build.
   userInterfaceStyle: "automatic",
   splash: {
-    backgroundColor: "#f6f8fb"
+    backgroundColor: "#2563EB"
   },
   androidStatusBar: {
     backgroundColor: "#f6f8fb",

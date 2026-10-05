@@ -392,21 +392,22 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
   );
 }
 
-// Transparent-background line art, recoloured to the palette (slate on light, aqua on dark); the
-// original opaque login-hero.png (cobalt on off-white) is no longer used by the app.
-const HERO_LIGHT = require("../../assets/login-hero-light.png");
-const HERO_DARK = require("../../assets/login-hero-dark.png");
+// The 揪飲 JOIN logo (transparent background). It is drawn in brand blue and cream, which disappears on the
+// dark page, so it always sits on `heroPlate` -- the page colour in light mode (invisible) and a pale blue
+// card in dark mode.
+const HERO_LOGO = require("../../assets/login-logo.png");
 
 function LoginHeroIllustration() {
   const styles = useThemedStyles(makeStyles);
-  const { isDark } = useTheme();
   return (
-    <Image
-      source={isDark ? HERO_DARK : HERO_LIGHT}
-      style={styles.illustration}
-      resizeMode="contain"
-      accessibilityLabel="揪飲 JOIN 插圖"
-    />
+    <View style={styles.illustrationPlate}>
+      <Image
+        source={HERO_LOGO}
+        style={styles.illustration}
+        resizeMode="contain"
+        accessibilityLabel="揪飲 JOIN 插圖"
+      />
+    </View>
   );
 }
 
@@ -543,9 +544,15 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     marginTop: 24,
     marginBottom: 14
   },
+  illustrationPlate: {
+    backgroundColor: colors.heroPlate,
+    borderRadius: 28,
+    padding: 12,
+    marginBottom: 8
+  },
   illustration: {
-    width: 282,
-    height: 246
+    width: 276,
+    height: 214
   },
   actionStack: {
     gap: 10
