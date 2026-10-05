@@ -3255,7 +3255,7 @@ function renderAdminPage({ title, bodyHtml, activeNav }) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escapeHtml(title)} · 飲料團購 管理後台</title>
+<title>${escapeHtml(title)} · 揪飲 JOIN 管理後台</title>
 <style>
 ${ADMIN_THEME_VARIABLES}
   * { box-sizing: border-box; }
@@ -3340,7 +3340,7 @@ ${ADMIN_THEME_VARIABLES}
 <div class="admin-shell">
   <aside class="admin-sidebar">
     <div class="sidebar-brand">
-      <div class="brand-title">飲料團購</div>
+      <div class="brand-title">揪飲 JOIN</div>
       <div class="brand-subtitle">管理後台</div>
     </div>
     <nav class="sidebar-nav">
@@ -3522,7 +3522,7 @@ function renderAdminLoginPage({ error, showLocalDevAutoLogin = false } = {}) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>管理後台登入 · 飲料團購</title>
+<title>管理後台登入 · 揪飲 JOIN</title>
 <style>
 ${ADMIN_THEME_VARIABLES}
   * { box-sizing: border-box; }
@@ -3545,7 +3545,7 @@ ${ADMIN_THEME_VARIABLES}
 </head>
 <body>
 <div class="loginCard">
-  <h1>飲料團購 管理後台</h1>
+  <h1>揪飲 JOIN 管理後台</h1>
   <form method="POST" action="/admin/login">
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
     <input type="password" name="password" placeholder="密碼" ${firebaseWebConfig ? "" : "autofocus"} required />

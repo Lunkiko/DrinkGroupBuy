@@ -22,7 +22,7 @@ const appScheme = process.env.EXPO_PUBLIC_APP_SCHEME || "drinkgroupbuy";
 const authMode = process.env.EXPO_PUBLIC_AUTH_MODE || "firebase";
 
 module.exports = {
-  name: "飲料團購",
+  name: "揪飲 JOIN",
   slug: "drink-group-buy-mobile-prototype",
   owner: "royor",
   version: "0.2.0",
