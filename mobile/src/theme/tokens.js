@@ -14,8 +14,7 @@ export const colors = {
   onDark: "#EAF4FF", // text on the panel filled with `text` (the pickup code)
   lineDecor: "#BFDBFE", // decorative card outline on customer screens ("light blue"); carries no meaning
   lineRow: "#D6E2F3", // 1px divider between list rows; carries no meaning
-  lineInput: "#6F86B0", // outline of an unselected input (must reach 3:1 on `page`)
-  heroPlate: "#FFFFFF" // plate behind the login logo: same as `page` here, a pale card in dark mode
+  lineInput: "#6F86B0" // outline of an unselected input (must reach 3:1 on `page`)
 };
 
 // Status pill colours. Meaning is never carried by colour alone: every tone also has a `mark`
@@ -44,8 +43,7 @@ export const darkColors = {
   onDark: "#172554",
   lineDecor: "#1E3F7A",
   lineRow: "#1E2C47",
-  lineInput: "#6F86AD",
-  heroPlate: "#EAF4FF"
+  lineInput: "#6F86AD"
 };
 
 export const darkTones = {
