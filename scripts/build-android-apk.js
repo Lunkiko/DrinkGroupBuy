@@ -38,7 +38,7 @@ function build() {
   }
   const env = { ...process.env, NODE_ENV: "production", CI: "1" };
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  const gradle = process.platform === "win32" ? ["cmd", ["/c", "gradlew.bat", "assembleRelease"]] : ["./gradlew", ["assembleRelease"]];
+  const gradle = process.platform === "win32" ? ["cmd", ["/c", ".\\gradlew.bat", "assembleRelease"]] : ["./gradlew", ["assembleRelease"]];
 
   // Not --clean: that regenerates android/app/debug.keystore, changing the signing SHA-1 Google sign-in is registered to.
   run(npx, ["expo", "prebuild", "--platform", "android", "--no-install"], { cwd: mobileDir, env, shell: process.platform === "win32" });
