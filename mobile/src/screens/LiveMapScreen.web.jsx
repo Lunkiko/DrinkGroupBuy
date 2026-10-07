@@ -26,13 +26,6 @@ const IDLE_PIN_COLOR = "#00BCD4"; // cyan
 const PIN_WIDTH = 27;
 const PIN_HEIGHT = 38;
 
-// The native map passes showsPointsOfInterest={false}; the Maps JavaScript API has no such flag, so the
-// same result comes from a style rule. Appended last so it also wins over DARK_MAP_STYLE's poi colours.
-const HIDE_POI_LABELS_STYLE = { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] };
-function getMapStyles(isDark) {
-  return [...(isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE), HIDE_POI_LABELS_STYLE];
-}
-
 export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
   const styles = useThemedStyles(makeStyles);
   const { colors, isDark } = useTheme();
@@ -183,10 +176,9 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
           clickableIcons: false,
           gestureHandling: "greedy",
           scrollwheel: true,
-          zoomControl: true,
-          zoomControlOptions: {
-            position: googleMaps.ControlPosition.RIGHT_CENTER
-          }
+          // The phone has no zoom buttons (pinch / double-tap only); the web preview matches it. Zoom with
+          // the scroll wheel or ctrl + scroll.
+          zoomControl: false
         });
 
         googleMapsRef.current = googleMaps;
@@ -216,7 +208,7 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
   // The night style follows the app theme, also while the map is already on screen.
   useEffect(() => {
     if (!mapReady || !mapInstanceRef.current) return;
-    mapInstanceRef.current.setOptions({ styles: getMapStyles(isDark) });
+    mapInstanceRef.current.setOptions({ styles: isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE });
   }, [mapReady, isDark]);
 
   const recenterOnUser = () => {

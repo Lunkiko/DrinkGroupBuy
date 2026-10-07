@@ -217,10 +217,10 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
           zoom
         }}
         rotateEnabled={false}
+        pitchEnabled={false}
         showsCompass={false}
         toolbarEnabled={false}
         mapType="standard"
-        showsPointsOfInterest={false}
         customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
         onMapReady={recomputeMarkerLabelPositions}
         onRegionChangeComplete={recomputeMarkerLabelPositions}
