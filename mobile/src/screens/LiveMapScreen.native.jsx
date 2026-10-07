@@ -8,7 +8,7 @@ import { Card } from "../components/Card";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useActivityMapFilters } from "../hooks/useActivityMapFilters";
 import { useDevLocationConfig } from "../hooks/useDevLocationConfig";
-import { mapCenter, mapDefaults } from "../mock/mapConfig";
+import { mapCenter, mapDefaults, markerLabelSettleMs } from "../mock/mapConfig";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { reportAppliedDevLocation } from "../utils/devLocationControl";
 import { buildStoreMapStores, getStoreMapDestination, getStoreMarkerLabel } from "../utils/groupBuyActivityStores";
@@ -40,6 +40,12 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
   // SDK 57, see PROGRESS.md 2026-08-19). Positions come from mapRef.pointForCoordinate(), the same
   // projection API the plain overlay buttons below already rely on implicitly via screen layout.
   const [markerLabelPositions, setMarkerLabelPositions] = useState({});
+  // True while the camera is moving. The labels are plain Views placed from projected coordinates, so
+  // while the map is dragged they would trail the pins; Google's own labels are drawn inside the map
+  // engine and cannot trail, ours can. So the labels are hidden for the duration of a move and shown again
+  // at the new position once the camera settles (same behaviour on the web preview).
+  const [isMapMoving, setIsMapMoving] = useState(false);
+  const settleTimerRef = useRef(null);
   const [selectedStoreId, setSelectedStoreId] = useState(null);
   const [filteredOutStoreName, setFilteredOutStoreName] = useState(null);
   const [locationPermission, setLocationPermission] = useState("not_required");
@@ -190,6 +196,24 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
     setMarkerLabelPositions(next);
   };
 
+  const showLabelsAtSettledPositions = async () => {
+    clearTimeout(settleTimerRef.current);
+    await recomputeMarkerLabelPositions();
+    setIsMapMoving(false);
+  };
+
+  // Called at the start of a move and on every continuous camera update. The timer is the safety net for
+  // a gesture that starts but never changes the bounds: Android then skips onRegionChangeComplete, and
+  // without this the labels would stay hidden. It is re-armed by every update, so it only fires once the
+  // camera has been still for a moment.
+  const hideLabelsWhileMoving = () => {
+    setIsMapMoving(true);
+    clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(showLabelsAtSettledPositions, markerLabelSettleMs);
+  };
+
+  useEffect(() => () => clearTimeout(settleTimerRef.current), []);
+
   // Re-project labels whenever the visible store set changes or the map camera settles after a
   // pan/zoom/recenter. onRegionChangeComplete already fires for animateCamera (recenterOnUser)
   // too, so a separate effect keyed on userPosition isn't needed.
@@ -223,7 +247,9 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
         mapType="standard"
         customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
         onMapReady={recomputeMarkerLabelPositions}
-        onRegionChangeComplete={recomputeMarkerLabelPositions}
+        onRegionChangeStart={hideLabelsWhileMoving}
+        onRegionChange={hideLabelsWhileMoving}
+        onRegionChangeComplete={showLabelsAtSettledPositions}
       >
         {/* No pinColor: omitting it gives Android's own default marker (Google's native red) --
             passing a red hex through the hue-only conversion above is a less direct way to ask
@@ -251,7 +277,7 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
         })}
       </MapView>
 
-      {visibleMapStores.map((store) => {
+      {!isMapMoving && visibleMapStores.map((store) => {
         const point = markerLabelPositions[store.id];
         if (!point) return null;
         return (

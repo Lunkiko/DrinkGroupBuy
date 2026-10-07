@@ -11,3 +11,7 @@ export const mapCenter = {
 export const mapDefaults = {
   zoom: 16
 };
+
+// How long the camera must stay still before the store-name labels come back after a pan or zoom. Both map
+// screens (phone and web preview) hide the labels while the map moves and use this as the "settled" delay.
+export const markerLabelSettleMs = 350;

@@ -8,7 +8,7 @@ import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useActivityMapFilters } from "../hooks/useActivityMapFilters";
 import { useDevLocationConfig } from "../hooks/useDevLocationConfig";
-import { mapCenter, mapDefaults } from "../mock/mapConfig";
+import { mapCenter, mapDefaults, markerLabelSettleMs } from "../mock/mapConfig";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { reportAppliedDevLocation } from "../utils/devLocationControl";
 import { buildStoreMapStores, getStoreMapDestination, getStoreMarkerLabel } from "../utils/groupBuyActivityStores";
@@ -39,6 +39,9 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
   const googleMapsRef = useRef(null);
   const markersRef = useRef([]);
   const markersByStoreIdRef = useRef(new Map());
+  // Whether the store-name labels are hidden because the map is moving (see setStoreLabelsHidden).
+  const labelsHiddenRef = useRef(false);
+  const labelSettleTimerRef = useRef(null);
   const [selectedStoreId, setSelectedStoreId] = useState(null);
   const [mapError, setMapError] = useState("");
   const [mapReady, setMapReady] = useState(false);
@@ -148,6 +151,23 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
     ])
   );
 
+  // The phone hides the store-name labels while the map moves and shows them again once it settles (they
+  // are Views placed from projected coordinates and would trail the pins). The web labels sit inside the map
+  // and would follow it exactly, but this preview exists to show what the phone does, so it behaves the same.
+  const setStoreLabelsHidden = (hidden) => {
+    labelsHiddenRef.current = hidden;
+    markersByStoreIdRef.current.forEach((marker) => marker.setLabelHidden(hidden));
+  };
+
+  // Hide on every camera change and show again once the camera has been still for markerLabelSettleMs, the
+  // same rule as the phone. The map's own `idle` event is not relied on alone: it can be delayed or missing
+  // (for example while map tiles cannot load), which would leave the labels hidden for good.
+  const hideStoreLabelsWhileMoving = () => {
+    setStoreLabelsHidden(true);
+    clearTimeout(labelSettleTimerRef.current);
+    labelSettleTimerRef.current = setTimeout(() => setStoreLabelsHidden(false), markerLabelSettleMs);
+  };
+
   useEffect(() => {
     if (!apiKey || !mapElementRef.current) {
       setMapReady(false);
@@ -183,6 +203,11 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
 
         googleMapsRef.current = googleMaps;
         mapInstanceRef.current = map;
+        map.addListener("bounds_changed", hideStoreLabelsWhileMoving);
+        map.addListener("idle", () => {
+          clearTimeout(labelSettleTimerRef.current);
+          setStoreLabelsHidden(false);
+        });
         googleMaps.event.trigger(map, "resize");
         map.setCenter(userMapCenter);
         if (active) setMapReady(true);
@@ -197,6 +222,7 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
 
     return () => {
       active = false;
+      clearTimeout(labelSettleTimerRef.current);
       markersRef.current.forEach((marker) => marker.setMap(null));
       markersRef.current = [];
       markersByStoreIdRef.current.clear();
@@ -252,6 +278,7 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
         labelDotSolid: store.hasRecruitingGroupBuyActivity,
         onPress: () => focusStore(store)
       });
+      marker.setLabelHidden(labelsHiddenRef.current);
       markersByStoreIdRef.current.set(store.id, marker);
       nextMarkers.push(marker);
     });
@@ -456,6 +483,7 @@ function createStoreOverlayMarker({ colors, googleMaps, map, position, title, pi
       this.pinColor = pinColor;
       this.labelText = labelText;
       this.labelDotSolid = labelDotSolid;
+      this.labelHidden = false;
       this.onPress = onPress;
       this.element = null;
       this.pinElement = null;
@@ -571,6 +599,11 @@ function createStoreOverlayMarker({ colors, googleMaps, map, position, title, pi
       this.element = null;
     }
 
+    setLabelHidden(hidden) {
+      this.labelHidden = hidden;
+      if (this.labelElement) this.labelElement.style.visibility = hidden ? "hidden" : "visible";
+    }
+
     update(nextValues) {
       Object.assign(this, nextValues);
       this.render();
@@ -581,6 +614,7 @@ function createStoreOverlayMarker({ colors, googleMaps, map, position, title, pi
       this.pinElement.title = this.title;
       this.pinShapeElement.setAttribute("fill", this.pinColor);
       this.labelElement.style.display = this.labelText ? "flex" : "none";
+      this.labelElement.style.visibility = this.labelHidden ? "hidden" : "visible";
       this.labelDotElement.style.background = this.labelDotSolid ? colors.accent : colors.page;
       this.labelTextElement.textContent = this.labelText;
     }
