@@ -13,6 +13,7 @@
     "mobile:web": "npm --prefix mobile run web",
     "mobile:apk": "node scripts/build-android-apk.js",
     "mobile:web:preview": "set EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:3001&& npm --prefix mobile run web",
+    "mobile:web:dev": "set EXPO_PUBLIC_AUTH_MODE=dev&& set EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:3001&& npm --prefix mobile run web",
     "mobile:android": "npm --prefix mobile run android",
     "db:init": "node database/init-dev-db.js",
     "db:seed": "node database/seed-dev-db.js",
