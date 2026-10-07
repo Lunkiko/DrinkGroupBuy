@@ -392,10 +392,10 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
   );
 }
 
-// Transparent-background line art recoloured to the brand palette (brand blue on light, light blue on
-// dark). Placeholder illustration: the 揪飲 JOIN logo itself is not used in the app yet (see
-// docs/brand/ and docs/ui-style-guide.md).
-const HERO_LIGHT = require("../../assets/login-hero-light.png");
+// Light mode shows the 揪飲 JOIN stacked logo (it already contains the name). Dark mode keeps the line-art
+// drinks recoloured to light blue: the logo's navy outlines would disappear on the dark page, and a plate or
+// halo around it looked wrong (2026-10-06), so the logo is light-mode only for now.
+const HERO_LIGHT = require("../../assets/login-logo-light.png");
 const HERO_DARK = require("../../assets/login-hero-dark.png");
 
 function LoginHeroIllustration() {
@@ -404,7 +404,7 @@ function LoginHeroIllustration() {
   return (
     <Image
       source={isDark ? HERO_DARK : HERO_LIGHT}
-      style={styles.illustration}
+      style={isDark ? styles.illustration : styles.logo}
       resizeMode="contain"
       accessibilityLabel="揪飲 JOIN 插圖"
     />
@@ -547,6 +547,10 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   illustration: {
     width: 282,
     height: 246
+  },
+  logo: {
+    width: 200,
+    height: 254
   },
   actionStack: {
     gap: 10
