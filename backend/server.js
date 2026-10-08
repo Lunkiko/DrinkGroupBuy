@@ -65,6 +65,7 @@ const {
 } = require("./db");
 const { createAuthToken, getBearerToken, safeEqual, verifyAuthToken } = require("./auth");
 const { verifyFirebaseIdToken } = require("./firebaseAuth");
+const { shouldBlockAdminSurface } = require("./adminSurfaceGuard");
 const {
   PaymentServiceError,
   cancelLinePayAuthorization,
@@ -563,6 +564,17 @@ const server = http.createServer(async (request, response) => {
     }
 
     const url = new URL(request.url, `http://${request.headers.host}`);
+
+    // ADMIN_WEB_LOOPBACK_ONLY=true (school VM: public IP, plain HTTP) -- the admin console, dev console and admin
+    // API answer only the machine itself and look like "not found" to everyone else. See adminSurfaceGuard.js.
+    if (shouldBlockAdminSurface({
+      pathname: url.pathname,
+      loopbackOnly: readBooleanEnv(process.env.ADMIN_WEB_LOOPBACK_ONLY, false),
+      isLoopback: isLoopbackRequest(request)
+    })) {
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/api/payment-rules/pickup-overdue") {
       sendJson(response, 200, { rule: getPickupOverdueRule() });

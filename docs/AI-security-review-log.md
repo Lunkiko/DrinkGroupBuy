@@ -1525,3 +1525,36 @@
 
 **這次沒審查到／沒驗證到的部分**：推播實際送達裝置（前景／背景／App 關閉）沒有驗證，仍需要重新打包 APK 後在真機測；migration 010 已於同日套用到本機開發資料庫與 Azure 資料庫（兩邊套用前都先 `pg_dump` 備份、套用後主要表筆數前後一致；Azure 連線全程使用完整憑證驗證，臨時防火牆規則需由使用者刪除）；已請款訂單在「管理員無條件取消」情境下仍不會收到任何通知（它們不在取消名單內，退款維持走獨立退款流程），這是這次範圍外的已知缺口。
 
+---
+
+## 2026-10-09 — 學校 VM 部署：後台僅限本機開關、http 展示版 APK、VM 安裝與備份腳本
+
+**範圍**：`backend/adminSurfaceGuard.js` 與 `backend/server.js` 的請求入口守門（`ADMIN_WEB_LOOPBACK_ONLY`）、`mobile/app.config.js` 的 `ALLOW_CLEARTEXT_HTTP`／`FREEZE_UPDATES`、`scripts/build-android-apk.js`（`--backend-url`、`--demo`）、`scripts/install-vm-service.ps1`、`scripts/backup-vm-database.ps1`、`scripts/update-vm-server.ps1`、`scripts/check-vm-readiness.ps1`、`docs/school-vm-deployment.md`。
+**觸發原因**：AGENTS.md 規則——改動碰到身份驗證與對外暴露面；專題展要把後端放到有公開 IP 的學校 VM，且沒有網域名稱，只能用 http。
+**方法**：聚焦複查這次改動。對守門邏輯寫 5 項單元測試；用真的後端（所有背景排程關閉、不碰資料）從 127.0.0.1 與本機區網位址各請求一次，確認被擋與沒被擋的路徑；實際打包 VM 版 APK 後檢查 manifest 與 JS 內容。
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 中 | 整體（VM 公開 IP＋http） | 沒有 HTTPS 時，顧客的 App session token 與付款相關請求以明碼傳輸，在網路上可被旁觀者看到 | 取得網域名稱後改 HTTPS（反向代理加憑證）；在那之前只放展示用資料、不使用真實個資 | 待處理（展示用途接受此風險，已寫入手冊「安全」一節） |
+| 中 | `/admin` 後台 | 後台共用密碼在 http 下明碼傳輸，且登入頁對全世界開放 | 新增 `ADMIN_WEB_LOOPBACK_ONLY=true`：`/admin`、`/dev-console`、`/api/admin/` 只回應本機請求，其他看起來是 404 | 已修（需在 VM 的 `backend/.env` 開啟，預設關閉以維持既有行為） |
+| 低 | `adminSurfaceGuard.js` | 若 VM 上另外架本機反向代理，所有請求都會來自 127.0.0.1，守門等於失效（刻意不信任 X-Forwarded-For，避免被偽造） | 手冊與程式註解都寫明「不要與本機反向代理併用」 | 評估後不修（用文件警告） |
+| 低 | 遠端桌面 3389 | VM 有公開 IP，遠端桌面對網際網路開放 | 強密碼、網路層級驗證（NLA）、請學校限制來源 | 待處理（VM 管理端，手冊已列） |
+| 低 | VM 版 APK | `--backend-url http://…` 的 APK 允許明碼 http | 只有帶 http 網址的專用建置才開 `ALLOW_CLEARTEXT_HTTP`；預設 release 建置仍拒絕 http（已驗證 manifest） | 已控管 |
+| 低 | 評估版 Windows Server | 授權到期後系統會定時關機，也代表這台機器可能未被正式維護與更新 | 確認剩餘天數，必要時請 IT 換正式授權 | 待處理 |
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| 守門邏輯的正確性 | 只收緊、不放寬：旗標關閉時行為與以前完全相同；旗標開啟時，非本機請求對 `/admin`、`/dev-console`、`/api/admin/` 回 404，`/health`、`/api/stores`、LINE Pay 回跳路由不受影響（真實後端實測：本機 `/admin/login` 200；區網位址 `/admin/login`、`/admin/accounts`、`/dev-console`、`/api/admin/…` 皆 404，`/health`、`/api/stores` 200）。路徑比對用精確前綴，`/administrator`、`/api/administrators` 不會被誤擋（單元測試） |
+| 開發登入模式 | `install-vm-service.ps1` 在 `backend/.env` 有 `AUTH_DEV_MODE=true` 時拒絕安裝；手冊明列必須為 `false` |
+| 專用 APK 的更新風險 | VM 版與展示版 APK 都關閉 EAS Update（manifest 的 `expo.modules.updates.ENABLED=false` 已驗證），避免之後從開發機發布的更新把它們導回 Azure 或離開展示模式 |
+| 打包產物與環境變數 | 發現並修正：Metro 與 Gradle 都不會因為只有環境變數改變而重新產生 JS，第一次 `--backend-url` 建置的 JS 裡仍是 Azure 網址。現在每次建置前清掉 Metro 快取與 Gradle 的 JS 產物；重建後驗證 JS 內只有 VM 網址、沒有 Azure 網址、沒有展示旗標 |
+| 機密處理 | 備份腳本從 `DATABASE_URL` 取得密碼，只放在該次執行的環境變數，結束就移除，不印出、不寫檔；檢查腳本不印出 `.env` 內容；資料庫備份放 VM 本機 `C:\apps\backups`，不進 Git |
+| 資料庫暴露 | 手冊要求 PostgreSQL 只聽本機、不新增 5432 的入站規則，並提供檢查指令 |
+| SQL／注入 | 這次沒有新增 SQL；新增腳本不拼接使用者輸入到命令中（路徑與埠為參數） |
+
+**這次沒審查到／沒驗證到的部分**：VM 上的實際設定（尚未部署）、學校邊界防火牆是否放行 3000 埠、HTTPS 方案、遠端桌面的實際強度、`/api/admin/` 在開關開啟時對遠端管理用途的影響（預期行為：只能本機使用）。
+

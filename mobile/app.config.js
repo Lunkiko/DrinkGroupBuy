@@ -21,6 +21,16 @@ const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 const appScheme = process.env.EXPO_PUBLIC_APP_SCHEME || "drinkgroupbuy";
 const authMode = process.env.EXPO_PUBLIC_AUTH_MODE || "firebase";
 
+// Build-time switches for APKs that talk to a self-hosted backend (the school VM) or run the offline demo,
+// set only by scripts/build-android-apk.js (--backend-url / --demo):
+// - ALLOW_CLEARTEXT_HTTP: let the app call an http:// backend. A release build otherwise refuses plain HTTP.
+//   Only for a closed, short-lived exhibition setup; passwords and tokens then cross the network unencrypted.
+// - FREEZE_UPDATES: turn EAS Update off for this APK. An update is published with the backend URL (or demo
+//   flag) of whoever publishes it, so a self-hosted or demo APK that kept updating would be switched back to
+//   Azure (or out of demo mode) by the next `eas update`.
+const allowCleartextHttp = process.env.ALLOW_CLEARTEXT_HTTP === "true";
+const freezeUpdates = process.env.FREEZE_UPDATES === "true";
+
 module.exports = {
   name: "揪飲 JOIN!",
   slug: "drink-group-buy-mobile-prototype",
@@ -28,6 +38,7 @@ module.exports = {
   version: "0.2.0",
   icon: "./assets/icon.png",
   updates: {
+    enabled: !freezeUpdates,
     url: "https://u.expo.dev/834894ac-fe79-4a32-872f-6cee5edf2214",
     // `eas build` injects this header automatically from the build profile's `channel`; a plain
     // `expo run:android` local build skips that step entirely, so without this the app has no
@@ -74,7 +85,7 @@ module.exports = {
         // NODE_ENV instead of leaving it unconditionally true -- a build ever run with
         // NODE_ENV=production won't silently allow plaintext HTTP app-wide.
         android: {
-          usesCleartextTraffic: process.env.NODE_ENV !== "production"
+          usesCleartextTraffic: process.env.NODE_ENV !== "production" || allowCleartextHttp
         }
       }
     ],

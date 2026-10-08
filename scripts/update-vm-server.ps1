@@ -71,6 +71,16 @@ if ($oldHead -ne $newHead) {
   Write-Step "Already up to date ($($newHead.Substring(0, 7))); restarting anyway."
 }
 
+# --- If the backend runs as the DrinkGroupBuyBackend scheduled task (scripts\install-vm-service.ps1), stop the
+# task first: killing only the node process would make the task's "restart on failure" start it again while
+# files are being replaced. ---
+$serviceTaskName = "DrinkGroupBuyBackend"
+$serviceTask = Get-ScheduledTask -TaskName $serviceTaskName -ErrorAction SilentlyContinue
+if ($serviceTask) {
+  Write-Step "Stopping the $serviceTaskName scheduled task..."
+  Stop-ScheduledTask -TaskName $serviceTaskName -ErrorAction SilentlyContinue
+}
+
 # --- Stop the running backend (before npm ci, which cannot replace files node is holding) ---
 $running = @(Get-BackendProcesses)
 if ($running.Count -gt 0) {
@@ -98,11 +108,17 @@ if ($changedFiles -contains "package-lock.json" -or $changedFiles -contains "pac
   }
 }
 
-# --- Start in its own console window so the logs stay visible ---
-Write-Step "Starting the backend in a new window..."
-$startCommand = '$Host.UI.RawUI.WindowTitle = ''DrinkGroupBuy Backend''; npm.cmd run backend:start'
-Start-Process -FilePath "powershell.exe" -WorkingDirectory $projectRoot `
-  -ArgumentList @("-NoExit", "-NoProfile", "-Command", $startCommand)
+# --- Start: through the scheduled task when it exists (survives logoff and reboot, logs go to
+# logs\backend.log), otherwise in its own console window so the logs stay visible ---
+if ($serviceTask) {
+  Write-Step "Starting the backend through the $serviceTaskName scheduled task..."
+  Start-ScheduledTask -TaskName $serviceTaskName
+} else {
+  Write-Step "Starting the backend in a new window..."
+  $startCommand = '$Host.UI.RawUI.WindowTitle = ''DrinkGroupBuy Backend''; npm.cmd run backend:start'
+  Start-Process -FilePath "powershell.exe" -WorkingDirectory $projectRoot `
+    -ArgumentList @("-NoExit", "-NoProfile", "-Command", $startCommand)
+}
 
 # --- Health check ---
 $healthUrl = "http://127.0.0.1:$Port/health"
