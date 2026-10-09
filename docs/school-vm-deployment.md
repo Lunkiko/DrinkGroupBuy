@@ -29,7 +29,8 @@
 | PostgreSQL | **未安裝** |
 | 防火牆 | 已有 `DrinkGroupBuy Backend 3000` 的入站規則 |
 | 對外連線 | GitHub、npm、Firebase、Expo 推播、LINE Pay 沙盒都通 |
-| 已知問題 | **時鐘慢約 8 小時**（時區是 China Standard Time，與台北同為 UTC+8，數值本身偏差）；系統是評估版，有使用期限 |
+| 已知問題 | **時鐘慢約 8 小時**（時區是 China Standard Time，與台北同為 UTC+8，但顯示的鐘點剛好等於 UTC 時間，疑似虛擬機主機把 UTC 當成當地時間送進來）；校時伺服器連不上（`w32tm /resync` 回報「沒有可用的時間數據」，學校可能擋了 UDP 123） |
+| 授權 | 評估版（`TIMEBASED_EVAL`），**2026-10-09 實測剩 124073 分鐘（約 86 天，到 2027 年 1 月初）**，可重置次數 6。專題展在這之前沒問題；要跑超過 2027 年 1 月初就得請學校 IT 處理 |
 
 > 重新檢查隨時可用：`scripts\check-vm-readiness.ps1`（唯讀，不會改任何設定也不會印出密碼）。
 
@@ -51,7 +52,20 @@ w32tm /query /status
 Get-Date
 ```
 
-`Get-Date` 要和你手機上的時間（台北時間）一致，誤差不超過一分鐘。若 `w32tm /resync` 失敗，可能是學校擋了時間伺服器，改指定校方或公用的 NTP（例如 `time.stdtime.gov.tw`）：
+`Get-Date` 要和你手機上的時間（台北時間）一致，誤差不超過一分鐘。
+
+**2026-10-09 實際狀況**：`w32tm /resync` 失敗（連不到校時伺服器），改成從網頁回應標頭讀出準確的 UTC 時間，換算成台北時間後手動設定（VM 連得到外網就可用）：
+
+```powershell
+$s = (Invoke-WebRequest https://www.google.com -UseBasicParsing -Method Head).Headers['Date']
+$utc = [DateTimeOffset]::Parse($s).UtcDateTime
+Set-Date ([TimeZoneInfo]::ConvertTimeFromUtc($utc, [TimeZoneInfo]::Local))
+Get-Date
+```
+
+設完之後要**重開機一次再看 `Get-Date`**（步驟七的開機測試時順便看）。如果又退回 8 小時前，代表虛擬機主機每次開機都會覆蓋時間，需要另外處理。
+
+若想讓系統自己校時，也可以指定校方或公用的 NTP（例如 `time.stdtime.gov.tw`），但前提是校內防火牆放行 UDP 123：
 
 ```powershell
 w32tm /config /manualpeerlist:"time.stdtime.gov.tw" /syncfromflags:manual /update
@@ -82,14 +96,29 @@ slmgr /dlv
    netstat -ano | findstr :5432
    ```
 
-   只應看到 `127.0.0.1:5432`、`[::1]:5432`。若看到 `0.0.0.0:5432`，到 `C:\Program Files\PostgreSQL\16\data\postgresql.conf` 把 `listen_addresses` 改成 `'localhost'`，重新啟動服務 `postgresql-x64-16`。**不要為 5432 新增任何入站防火牆規則。**
+   只應看到 `127.0.0.1:5432`、`[::1]:5432`。**EDB 安裝程式預設會把 `listen_addresses` 設成 `*`（2026-10-09 實測：安裝完是 `0.0.0.0:5432`）**，要改成只接受本機：
+
+   ```powershell
+   $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+   & $psql -U postgres -h localhost -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
+   Restart-Service postgresql-x64-16
+   netstat -ano | findstr :5432
+   ```
+
+   `ALTER SYSTEM` 會寫進 `postgresql.auto.conf`（優先於 `postgresql.conf`），不用手動編輯設定檔。**不要為 5432 新增任何入站防火牆規則**；用 `Get-NetFirewallPortFilter | Where-Object { $_.LocalPort -eq '5432' }` 確認沒有安裝程式自己加的規則（實測沒有）。
 4. 建立專案用的資料庫與帳號（`<密碼>` 換成新的強密碼）：
 
    ```powershell
    $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
-   & $psql -U postgres -h localhost -c "CREATE ROLE drink_group_buy LOGIN PASSWORD '<密碼>';"
+   & $psql -U postgres -h localhost -c "CREATE ROLE drink_group_buy LOGIN;"
    & $psql -U postgres -h localhost -c "CREATE DATABASE drink_group_buy OWNER drink_group_buy;"
+   # 密碼只存在 $pw 變數裡：不經過剪貼簿（RDP 剪貼簿與本機共用）、不出現在指令列與 PowerShell 歷史紀錄
+   $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+   "ALTER ROLE drink_group_buy PASSWORD :'pw';" | & $psql -U postgres -h localhost -v pw=$pw
+   $env:PGPASSWORD = $pw; & $psql -U drink_group_buy -h localhost -d drink_group_buy -c "SELECT current_user, current_database();"; Remove-Item Env:\PGPASSWORD
    ```
+
+   最後一行應回 `drink_group_buy | drink_group_buy`（2026-10-09 實測通過）。**這個 PowerShell 視窗保持開著**，步驟五要用 `$pw` 寫進 `.env`；視窗關掉了就重跑 `$pw = …` 與 `ALTER ROLE` 兩行重設一組新密碼即可。密碼只用英數字，`DATABASE_URL` 不必做網址編碼。
 
 ## 步驟四：更新程式碼
 
@@ -118,19 +147,56 @@ npm ci
 
 以 `.env.example` 為底，**整份重寫**（舊的是 7 月的版本，缺很多設定）：
 
+先備份舊檔、複製範本，再用 `Set-EnvLine` 逐項改值（只換 `KEY=` 開頭的那一行，其他行與中文註解原封不動；UTF-8 無 BOM，已在 Windows PowerShell 5.1 試跑驗證）。隨機值一律用 `RandomNumberGenerator`（密碼學安全亂數），**不要用 `Get-Random`**——它不是密碼學安全的亂數來源：
+
 ```powershell
 cd C:\apps\DrinkGroupBuy
-Copy-Item backend\.env backend\.env.old-july   # 先備份舊的
-Copy-Item .env.example backend\.env
-notepad backend\.env
+if (Test-Path .\.env) { Write-Host "WARNING: root .env exists and takes priority over backend\.env" }
+if (Test-Path backend\.env) { Copy-Item backend\.env backend\.env.old-july -Force }
+Copy-Item .env.example backend\.env -Force
+
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+function Set-EnvLine([string]$Key, [string]$Value) {
+  $path = (Resolve-Path backend\.env).Path
+  $found = $false
+  $out = foreach ($line in [System.IO.File]::ReadAllLines($path, $utf8)) {
+    if ($line -match ('^' + [regex]::Escape($Key) + '=')) { $found = $true; "$Key=$Value" } else { $line }
+  }
+  if (-not $found) { $out = @($out) + "$Key=$Value" }
+  [System.IO.File]::WriteAllLines($path, [string[]]$out, $utf8)
+}
+function New-RandomHex([int]$Bytes) {
+  $buf = New-Object byte[] $Bytes
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $rng.GetBytes($buf); $rng.Dispose()
+  -join ($buf | ForEach-Object { $_.ToString('x2') })
+}
+
+# 資料庫密碼：重新產生並設給 drink_group_buy（會問一次 postgres 密碼），再寫進 DATABASE_URL
+$psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+$pw = New-RandomHex 24
+"ALTER ROLE drink_group_buy PASSWORD :'pw';" | & $psql -U postgres -h localhost -v pw=$pw
+Set-EnvLine DATABASE_URL "postgres://drink_group_buy:$pw@localhost:5432/drink_group_buy"
+
+Set-EnvLine AUTH_SESSION_SECRET (New-RandomHex 32)
+Set-EnvLine PORT 3000
+Set-EnvLine AUTH_DEV_MODE false
+Set-EnvLine ADMIN_WEB_LOOPBACK_ONLY true
+Set-EnvLine FIREBASE_PROJECT_ID drinkgroupbuy-mobile
+Set-EnvLine FIREBASE_WEB_API_KEY <mobile\.env 的 EXPO_PUBLIC_FIREBASE_API_KEY>
+Set-EnvLine FIREBASE_WEB_AUTH_DOMAIN <mobile\.env 的 EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN>
+Set-EnvLine FIREBASE_WEB_APP_ID <mobile\.env 的 EXPO_PUBLIC_FIREBASE_APP_ID>
+Set-EnvLine LINE_PAY_CAPTURE_SEPARATED true
+Set-EnvLine LINE_PAY_CONFIRM_URL http://163.17.135.215:3000/api/payments/line-pay/confirm
+Set-EnvLine LINE_PAY_CANCEL_URL http://163.17.135.215:3000/api/payments/line-pay/cancel
 ```
 
-必須修改的項目（機密不要貼進對話或提交到 Git）：
+必須修改的項目（機密不要貼進對話或提交到 Git；上面的指令已經處理了其中大部分，剩下的機密——後台密碼、Firebase 金鑰、LINE Pay 金鑰——見下表）：
 
 | 項目 | 設定 | 來源／說明 |
 | --- | --- | --- |
 | `PORT` | `3000` | 與防火牆規則、`update-vm-server.ps1`、APK 網址一致 |
-| `AUTH_SESSION_SECRET` | 新產生的隨機字串（32 字元以上） | 產生：`[Convert]::ToBase64String((1..32 \| ForEach-Object { Get-Random -Maximum 256 }))`；**不要沿用 Azure 的值** |
+| `AUTH_SESSION_SECRET` | 新產生的隨機字串（32 字元以上） | 用上面的 `New-RandomHex 32`（64 個十六進位字元）；**不要沿用 Azure 的值** |
 | `AUTH_DEV_MODE` | **`false`** | VM 有公開 IP，開發登入模式一定要關。`install-vm-service.ps1` 看到 `true` 會拒絕安裝 |
 | `ADMIN_WEB_LOOPBACK_ONLY` | `true`（建議） | 管理後台只允許在 VM 本機開啟，見「安全」 |
 | `ADMIN_WEB_PASSWORDS` | 強密碼（可用逗號分隔多組） | 後台共用密碼；`.env.example` 沒列這項，說明見 `docs/azure-classroom-deployment.md` |
@@ -142,9 +208,57 @@ notepad backend\.env
 | 所有 `*_RUNTIME` | `postgres` | `.env.example` 已經是 `postgres`，不要改 |
 | `LINE_PAY_CHANNEL_ID`、`LINE_PAY_CHANNEL_SECRET` | 沙盒金鑰 | 從 Azure 入口網站 → App Service → 環境變數取得，或 LINE Pay 沙盒後台 |
 | `LINE_PAY_CONFIRM_URL`、`LINE_PAY_CANCEL_URL` | `http://163.17.135.215:3000/api/payments/line-pay/confirm`（與 `cancel`） | 必須是**手機瀏覽器連得到**的網址 |
+| `LINE_PAY_CAPTURE_SEPARATED` | **`true`** | 範本預設是 `false`，此時後端會**直接擋掉所有 LINE Pay 請求**（避免自動請款被誤當預授權）。Azure 因為當初沒測付款所以是 `false`，VM 要展示付款就必須 `true`。仍是沙盒：`LINE_PAY_ENV` 維持 `sandbox`，且 `PAYMENT_CAPTURE_RUNTIME_ALLOW_PRODUCTION` 不要設（`LINE_PAY_ENV=production` 時後端會拒絕啟動） |
 | `LINE_PAY_APP_RETURN_URL` | `drinkgroupbuy://payment/result` | 與 App 的 scheme 一致 |
 | `SETTLEMENT_SCHEDULER_ENABLED`、`PICKUP_EXPIRATION_SCHEDULER_ENABLED` | `true` | 展示要看到自動結算與取餐逾期；Azure 展示環境曾關閉，VM 要開 |
 | `ALERT_WEBHOOK_URL` | 留空 | 沒有告警頻道就不設 |
+
+### 輸入三個機密（不經過對話、不顯示在畫面上）
+
+同一個 PowerShell 視窗（`Set-EnvLine` 還在；視窗關了就重貼步驟五那段函式定義），**必須是系統管理員身分**。
+
+1. **後台密碼與 LINE Pay 金鑰**：用 `Read-Host -AsSecureString` 輸入，畫面不顯示字元，貼上用滑鼠右鍵：
+
+   ```powershell
+   function Read-SecretText([string]$Prompt) {
+     $s = Read-Host $Prompt -AsSecureString
+     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
+     try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+   }
+   $admin = Read-SecretText "Admin web password (12+ chars, no comma)"
+   if ($admin.Length -lt 12 -or $admin.Contains(',')) { Write-Host "REJECTED: too short or has a comma" } else { Set-EnvLine ADMIN_WEB_PASSWORDS $admin }
+   Set-EnvLine LINE_PAY_CHANNEL_ID (Read-Host "LINE Pay Channel ID")
+   Set-EnvLine LINE_PAY_CHANNEL_SECRET (Read-SecretText "LINE Pay Channel Secret")
+   Remove-Variable admin
+   ```
+
+   `ADMIN_WEB_PASSWORDS` 用逗號分隔多組，所以密碼本身不能有逗號。含 `$`、反引號、引號、`&`、`#`、空白的密碼都已用假資料試過，寫入後與輸入完全一致。
+
+2. **Firebase 服務帳戶金鑰（建議為 VM 另外產生一把，專題展後可單獨撤銷）**：Firebase Console → 專案設定 → 服務帳戶 → 產生新的私密金鑰，下載 JSON。用本機記事本開啟、全選複製；在 VM 上：
+
+   ```powershell
+   New-Item -ItemType Directory -Force C:\apps\secrets | Out-Null
+   notepad C:\apps\secrets\firebase-adminsdk.json     # 貼上、存檔（詢問是否建立新檔時選「是」）
+   ```
+
+   存檔後鎖權限、寫進設定、檢查 JSON 格式（只印型別、專案、信箱，**不印私鑰**）：
+
+   ```powershell
+   icacls C:\apps\secrets /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F'
+   Set-EnvLine GOOGLE_APPLICATION_CREDENTIALS C:\apps\secrets\firebase-adminsdk.json
+   node -e "const j=JSON.parse(require('fs').readFileSync('C:/apps/secrets/firebase-adminsdk.json','utf8'));console.log('type:',j.type,'| project:',j.project_id,'| email:',j.client_email,'| has private_key:',typeof j.private_key==='string'&&j.private_key.includes('BEGIN PRIVATE KEY'))"
+   ```
+
+   權限只留「系統管理員」與「SYSTEM」（開機自動啟動的任務是 SYSTEM 身分）。**非系統管理員身分的視窗在鎖定後讀不到這個資料夾**，所以要用管理員身分的 PowerShell。複製完金鑰後，記得把本機下載的 JSON 刪掉，並隨便複製一段無關文字蓋掉剪貼簿（RDP 剪貼簿與本機共用）。
+
+3. **檢查**：
+
+   ```powershell
+   foreach ($k in 'ADMIN_WEB_PASSWORDS','LINE_PAY_CHANNEL_ID','LINE_PAY_CHANNEL_SECRET','GOOGLE_APPLICATION_CREDENTIALS') {
+     $l = Get-Content backend\.env | Where-Object { $_ -like "$k=*" } | Select-Object -First 1
+     if ($l) { $v = $l.Substring($k.Length + 1); if ($k -eq 'GOOGLE_APPLICATION_CREDENTIALS') { "$k=$v" } else { "$k=(set, $($v.Length) chars)" } } else { "$k=(MISSING)" }
+   }
+   ```
 
 ## 步驟六：建立資料表與資料
 
@@ -205,7 +319,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
    npm run mobile:apk -- --demo
    ```
 
-   產生 `<月日>-demo.apk`，同樣凍結更新。現場網路或 VM 出狀況時用它救場。
+   產生 `<月日>-demo.apk`，同樣凍結更新。現場網路或 VM 出狀況時用它救場。展示版的 JS 裡仍留著 `.env` 的 Azure 網址字串，但每個 API 呼叫都先檢查展示旗標、不會送出請求；出發前請在手機開**飛航模式**實測一次完整流程，這才是它真的不依賴後端的證據。
 4. 用 VM 版 APK 在校內 Wi-Fi 與行動網路各走一遍：Google 登入、瀏覽地圖與團購、下單、LINE Pay 沙盒付款、商家標記可領取、推播通知。
 
 ## 安全

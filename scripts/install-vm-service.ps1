@@ -94,7 +94,7 @@ if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContin
 # cmd.exe is only used for the >> redirection into the log file. The outer pair of quotes after /c is stripped
 # by cmd, which is what lets the inner quoted paths survive.
 $argument = '/c ""' + $nodeExe + '" backend\server.js >> "' + $logFile + '" 2>&1"'
-$action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $argument -WorkingDirectory $ProjectPath
+$taskAction = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $argument -WorkingDirectory $ProjectPath
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
@@ -107,7 +107,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
   }
 }
 Invoke-Action "Registering the task $TaskName (starts at boot as SYSTEM, restarts every 1 minute after a crash)" {
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
+  Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger -Principal $principal -Settings $settings `
     -Description "DrinkGroupBuy backend (node backend\server.js). Log: $logFile" | Out-Null
 }
 
