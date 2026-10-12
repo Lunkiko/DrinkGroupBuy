@@ -65,13 +65,31 @@ Get-Date
 
 設完之後要**重開機一次再看 `Get-Date`**（步驟七的開機測試時順便看）。如果又退回 8 小時前，代表虛擬機主機每次開機都會覆蓋時間，需要另外處理。
 
-若想讓系統自己校時，也可以指定校方或公用的 NTP（例如 `time.stdtime.gov.tw`），但前提是校內防火牆放行 UDP 123：
+**這台 VM 不手動校，時鐘會自己跑偏**：2026-10-12 實測比網路時間快了 4 分 32 秒（意外重開機或主機端的影響都有可能）。
+
+**Windows 內建的自動校時在這個網路上行不通**（2026-10-12 實測）：
+
+| 項目 | 結果 |
+| --- | --- |
+| `w32tm /stripchart /computer:time.stdtime.gov.tw` | 連得到，差約 0.5 秒 |
+| `time.google.com`、`time.cloudflare.com`、`time.windows.com`（預設） | 連不到（`0x800705B4` 逾時） |
+| 把校時服務（`w32time`）設成 `time.stdtime.gov.tw,0x8` 後 | **仍然不會同步**：`w32tm /query /peers` 狀態變成「挂起」、層次 0；`/query /status` 的來源一直是 `Local CMOS Clock` |
+
+測試指令通、服務卻不通，推測是學校防火牆擋了「進到 123 埠」的封包（服務固定用 123 埠收發，測試指令用臨時埠）。**所以不要再花時間調 `w32tm`**，改用下面這個腳本。
+
+**自動校時腳本 `scripts\sync-vm-clock.ps1`**：HTTPS 是通的，而每個 HTTPS 回應都帶有 `Date` 標頭。腳本向多個獨立的網站讀時間、用多數決排除異常的來源、再校正時鐘。安全規則（時鐘會影響團購截止與結算，錯誤的校正比不校更糟）：至少要 2 個來源回應；與其他來源差超過 3 秒的當作異常忽略，且必須過半數來源一致，否則**不調整**；偏差在 2 秒內不動；偏差超過 12 小時**拒絕調整**並記錄；時區只回報、不更改。每次執行都寫日誌 `C:\apps\DrinkGroupBuy\logs\clock-sync.log`（含每個來源的讀數）。
+
+管理員 PowerShell：
 
 ```powershell
-w32tm /config /manualpeerlist:"time.stdtime.gov.tw" /syncfromflags:manual /update
-Restart-Service w32time
-w32tm /resync /force
+cd C:\apps\DrinkGroupBuy
+git pull --ff-only
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-vm-clock.ps1 -DryRun     # 只量測，不改時鐘
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-vm-clock.ps1             # 量測並校正一次
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-vm-clock.ps1 -Register   # 開機後與每 15 分鐘自動執行（以 SYSTEM 身分）
 ```
+
+`-DryRun` 應印出各來源的讀數與 `OK` 或 `Would correct`。`-Unregister` 可移除排程任務。**本機（Windows PowerShell 5.1）已測過**：各分支（正常、偏差、來源不足、來源矛盾、偏差過大、非管理員）、排程任務註冊與經由排程器執行；**在 VM 上以 SYSTEM 身分實際執行還沒驗證過**。
 
 ## 步驟二：確認系統授權還剩多久
 
@@ -304,8 +322,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
 
 ## 步驟九：外部連線測試與打包 APK
 
-1. **從外面測**：用手機的**行動網路**（不要連校內 Wi-Fi）開瀏覽器到 `http://163.17.135.215:3000/health`，要看到 `{"ok":true,…}`。再用校內 Wi-Fi 測一次。兩種網路都要通。
-   - 不通：代表學校的邊界防火牆擋了入站 TCP 3000，要請 IT 開放（只要這個埠，且限於展示期間）。
+1. **從校內網路測**：**使用對象只有校內網路的人**（專題展現場），所以只需要校內能連到，**不要求從網際網路連得到**。人在學校時，手機連**校內 Wi-Fi**，開瀏覽器到 `http://163.17.135.215:3000/health`，要看到 `{"ok":true,…}`。
+   - **2026-10-09 實測（人在校外，手機用行動網路）**：`/health` 與 `/admin` 都一直轉圈、載不出來。防火牆規則已確認是 `Allow`、來源 `Any`，所以是學校邊界擋了從網際網路進來的 3000 埠，同一個邊界卻放行 3389（遠端桌面）。這對我們反而是好事：後端 API 不會被網際網路上的人連到。**因此行動網路連不到是預期的**，專題展現場請讓手機連校內 Wi-Fi。
+   - 校內 Wi-Fi 也連不到：先確認 VM 防火牆規則 `DrinkGroupBuy Backend 3000` 是 `Allow`/`Any`（已確認過），再查是不是校內不同網段之間被擋；那就改用備案 APK（`--demo`）或另外找學校有放行的埠。
+   - **還沒在校內實測過**，這項要等人在學校時才能確認。
 2. **打包 VM 專用 APK**（在你自己的電腦）：
 
    ```bash
@@ -320,7 +340,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
    ```
 
    產生 `<月日>-demo.apk`，同樣凍結更新。現場網路或 VM 出狀況時用它救場。展示版的 JS 裡仍留著 `.env` 的 Azure 網址字串，但每個 API 呼叫都先檢查展示旗標、不會送出請求；出發前請在手機開**飛航模式**實測一次完整流程，這才是它真的不依賴後端的證據。
-4. 用 VM 版 APK 在校內 Wi-Fi 與行動網路各走一遍：Google 登入、瀏覽地圖與團購、下單、LINE Pay 沙盒付款、商家標記可領取、推播通知。
+4. 用 VM 版 APK 在**校內 Wi-Fi** 走一遍：Google 登入、瀏覽地圖與團購、下單、LINE Pay 沙盒付款、商家標記可領取、推播通知。（行動網路連不到 VM，見上面步驟 1。）
 
 ## 安全
 
@@ -329,7 +349,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
 | 管理後台密碼用 http 明碼傳送、登入頁對全世界開放 | 在 `backend\.env` 設 `ADMIN_WEB_LOOPBACK_ONLY=true`：`/admin`、`/dev-console`、`/api/admin/` 只接受 VM 本機的請求，外部看起來是 404。要用後台就在 VM 裡開 Edge，網址 `http://127.0.0.1:3000/admin`。**不要在 VM 上再架本機反向代理**，否則所有請求都會被當成本機，這個保護就失效 |
 | 開發登入模式 | `AUTH_DEV_MODE=false`；安裝腳本會擋 |
 | 登入憑證與資料以明碼傳輸（沒有 HTTPS） | 只適合展示用資料；不要在上面使用真實個資。拿到網域名稱後改 HTTPS |
-| 遠端桌面（3389）對網際網路開放 | 使用強密碼、確認啟用「網路層級驗證（NLA）」；有可能的話請學校把 3389 限制為你們的來源 |
+| 遠端桌面（3389）對網際網路開放 | 使用強密碼、確認啟用「網路層級驗證（NLA）」；有可能的話請學校把 3389 限制為你們的來源。**2026-10-09 實測**：防火牆日誌看到不同國家的 IP 每幾秒就來連一次 3389；過去 1 小時有 423 次登入失敗（猜 `USER` 300、`ADMIN` 74、`Administrator` 50 次，沒人猜到實際登入帳號）；過去 3 天成功的遠端登入只有自己的帳號與自己的 IP。帳戶鎖定原則原本就啟用（10 次失敗鎖 10 分鐘），事件 4740 顯示 `Administrator` 每約 12 分鐘被鎖一次，證明有效；**2026-10-10 調成「錯 5 次鎖 20 分鐘、10 分鐘內累積」**（`net accounts /lockoutthreshold:5 /lockoutduration:20 /lockoutwindow:10`，`net accounts` 確認），攻擊者對 `Administrator` 的猜測速度降到每 22 分鐘 5 次。**這個設定對整台 VM 的所有本機帳號都適用，包括自己的帳號**：遠端桌面登入密碼打錯兩次就先停手，連錯 5 次會被鎖 20 分鐘且沒有人能幫忙解鎖。鎖定只能鎖「存在的帳號」，管不到猜 `USER`／`ADMIN` 這類不存在的名字。查被鎖紀錄：`Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4740} -MaxEvents 5`。**內建 `Administrator` 帳號是啟用的**（密碼 2026-07-07 設定、當天登入過一次、之後沒人用），強度未知；它是 VM 提供者建立的，**不要自己改密碼或停用**（可能是 IT 的管理入口），請 IT 確認。查詢指令：`Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4625; ...}`（失敗）、`Id=4624`（成功，`Properties[8]` 是登入類型、`[18]` 是來源 IP） |
+| 防火牆日誌 | 診斷用的 `netsh advfirewall set allprofiles logging droppedconnections/allowedconnections enable` 幾分鐘就寫出數 MB（3389 掃描），**測完要用 `disable` 關掉** |
 | 資料庫不應對外 | 不要為 5432 開入站規則；`netstat -ano \| findstr :5432` 只應看到本機位址 |
 | 機密 | `backend\.env` 與服務帳戶金鑰只放在 VM，不進 Git、不貼進對話；Azure 部署期間曾外露過的機密（PostgreSQL 密碼、Firebase 金鑰、`AUTH_SESSION_SECRET`）VM 這邊都用新的 |
 | 評估版授權到期 | 步驟二 |
@@ -346,11 +367,96 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
 | 移除自動啟動 | `scripts\install-vm-service.ps1 -Uninstall` |
 | 整體健檢 | `scripts\check-vm-readiness.ps1` |
 
+## 展示當天：VM 的時間又不準怎麼辦
+
+**為什麼要在意**：後端所有時間判斷都用 VM 的時鐘。VM 的時鐘比真實時間快或慢幾分鐘，會直接影響展示：
+
+| 症狀（任何一個出現，先查時間） | 原因 |
+| --- | --- |
+| 商家開團時 App 顯示「**開始時間不能是過去的時間，請重新整理後再試一次**」 | 後端只容忍 60 秒；VM 時鐘比手機快的時候，商家選「現在」開始就會被當成過去 |
+| 截止結算、取餐逾期的時間點比預期**早**或**晚** | 截止時間是用 VM 時鐘判斷的 |
+| Google 登入突然失敗 | 登入憑證的時間與 VM 時鐘差太多（確切容忍秒數未確認） |
+| 後台統計、訂單的時間看起來不對 | 同上 |
+
+> **時鐘太快的危險**：團購會被**提早結算**，已經結算（請款或作廢）的不能復原。所以**展示前一天先校好、開場前再比對一次**，不要等到出問題才查。
+
+**每一步都用「管理員」身分的 PowerShell**（視窗標題要有「管理员」）。遠端桌面連進 VM 後，開始功能表輸入 `PowerShell`、對它按右鍵、選「以系統管理員身分執行」。
+
+### 步驟 1：比對（30 秒）
+
+```powershell
+$s = (Invoke-WebRequest https://www.google.com -UseBasicParsing -Method Head).Headers['Date']
+$net = [DateTimeOffset]::Parse($s).UtcDateTime
+"VM now          : $(Get-Date)"
+"Internet (Taipei): $([TimeZoneInfo]::ConvertTimeFromUtc($net, [TimeZoneInfo]::Local))"
+"Difference (VM - internet): $([math]::Round(((Get-Date).ToUniversalTime() - $net).TotalSeconds, 1)) seconds"
+(Get-TimeZone).Id
+```
+
+- **差距在 ±3 秒內，時區是 `Taipei Standard Time`**：時間正確，不用處理。
+- **差距超過 30 秒**，或**時區不是 `Taipei Standard Time`**：做步驟 2。
+- 正數表示 VM 太快，負數表示 VM 太慢。
+
+### 步驟 2：立刻校準（一定有效）
+
+```powershell
+Set-TimeZone -Id "Taipei Standard Time"
+$s = (Invoke-WebRequest https://www.google.com -UseBasicParsing -Method Head).Headers['Date']
+$utc = [DateTimeOffset]::Parse($s).UtcDateTime
+Set-Date ([TimeZoneInfo]::ConvertTimeFromUtc($utc, [TimeZoneInfo]::Local))
+```
+
+**每次都要重新抓時間**（執行完整三行）。不要拿之前存在變數裡的時間來設，它已經過期了，會把時鐘設成慢的。
+
+### 步驟 3：確認
+
+再執行一次步驟 1，差距要回到 ±3 秒內。**展示正在進行時盡量不要調時鐘**（調整超過一分鐘，會影響進行中團購的截止判斷），挑兩場展示之間做。
+
+### 步驟 4：如果又很快跑偏（一小時內又差超過 30 秒）
+
+代表自動校時沒有在運作。查校時腳本的日誌與任務：
+
+```powershell
+Get-Content C:\apps\DrinkGroupBuy\logs\clock-sync.log -Tail 10
+Get-ScheduledTask -TaskName DrinkGroupBuyClockSync | Select-Object TaskName, State | Format-Table | Out-String
+```
+
+日誌的每一行代表什麼：
+
+| 日誌 | 意思 |
+| --- | --- |
+| `OK: offset ...` | 時間在 2 秒內，沒有動 |
+| `CORRECTED: the clock was ... s off` | 有校正過（正數代表原本太快） |
+| `REFUSED: no agreement` 或 `only N of M sources answered` | 網路來源有問題，**沒有調整**；做步驟 2 手動校準 |
+| `REFUSED: offset ... is larger than 43200 s` | 偏差超過 12 小時，不敢自動調；做步驟 2 手動校準，並先確認時區 |
+| 最後一行很久以前 | 排程任務沒在跑；任務不存在就重新執行 `-Register` |
+
+- **任務不存在**：重新執行上一節的 `-Register`。
+- **日誌一直是 `REFUSED`**：做步驟 2 手動校準，並把日誌的最後 20 行留起來查原因。
+
+### 如果 VM 連不到網際網路（步驟 1、2 的第一行失敗）
+
+改用手機的台北時間手動設定，**把引號裡換成現在的日期時間**：
+
+```powershell
+Set-Date "2026-10-15 09:30:00"
+```
+
+誤差一兩分鐘通常可以接受，但開團時會更容易遇到「開始時間不能是過去的時間」。
+
+### 預防
+
+- [ ] 自動校時腳本已註冊（`Get-ScheduledTask -TaskName DrinkGroupBuyClockSync`），且日誌裡看得到近期的 `OK`。
+- [ ] **展示前一天**與**展示開場前**各做一次步驟 1。
+- [ ] VM 剛**意外重開機**之後（見疑難排解），也先做步驟 1，開機後等 3～5 分鐘服務起來再比。
+- [ ] **不要**為了修時間而重開機，也**不要**更改時區設定。
+
 ## 疑難排解
 
 | 症狀 | 常見原因 |
 | --- | --- |
 | Google 登入一直失敗 | VM 時鐘不準（步驟一）；`FIREBASE_*` 設定錯；VM 連不到 Google（跑 `check-vm-readiness.ps1`） |
+| VM 自己重開機了 | **2026-10-10 05:25 實測發生過一次**：系統事件 `id=41`、`id=6008`（意外關閉），沒有 `id=1001` 藍屏紀錄，推測是虛擬機主機端的斷電或強制重置，不是我們造成的。VM 約 8 分鐘後自己開機，後端任務在開機後約 3 分鐘自己啟動，`/health` 正常；之後每日 03:00 備份照常成功（資料庫在意外關機後完整）。後端日誌兩次開機都沒有 `ECONNREFUSED`／`starting up`，沒有「後端比 PostgreSQL 先起來」的問題，不需要調整。展示當天若遇到，等 3～5 分鐘服務會自己回來；查原因：`Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,1074,6006,6008} -MaxEvents 6`（`id=1074` 是有人或有程式下令重開，會寫明是誰） |
 | 手機連不到後端 | 學校邊界防火牆擋了入站 3000；VM 防火牆規則不在；後端沒啟動（看 `/health` 與日誌） |
 | App 顯示連線失敗但瀏覽器 `/health` 正常 | APK 沒用 `--backend-url` 打包（release 版預設拒絕 http）；或 APK 指向舊的 Azure 網址 |
 | 後端啟動就結束 | `backend\.env` 缺項或資料庫連不上，看 `logs\backend.log`；`DATABASE_URL` 的密碼要網址編碼 |
@@ -364,7 +470,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
 - [ ] PostgreSQL 16 已安裝、只聽本機、備份任務已註冊
 - [ ] `backend\.env` 重寫完成，`AUTH_DEV_MODE=false`，`ADMIN_WEB_LOOPBACK_ONLY=true`，機密不在 Git
 - [ ] 重開機測試通過（不登入也能連到 `/health`）
-- [ ] 外部（行動網路）與校內 Wi-Fi 都連得到後端
+- [ ] 校內 Wi-Fi 連得到後端（使用對象只有校內網路；行動網路連不到是預期的）
 - [ ] VM 版 APK 與展示備案 APK 已打包並實際安裝測過
 - [ ] 完整流程走過一遍：登入 → 下單 → 付款沙盒 → 截止結算 → 可領取 → 取餐核銷 → 推播
 - [ ] Azure 防火牆舊規則已刪除、Downloads 的金鑰已移到安全位置
