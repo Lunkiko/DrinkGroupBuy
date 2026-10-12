@@ -103,7 +103,7 @@ function Get-ClockOffsetSeconds {
   param([string]$Url)
   $before = [DateTime]::UtcNow
   try {
-    $replyHeaders = (Invoke-WebRequest -Uri $Url -UseBasicParsing -Method Head -TimeoutSec 10).Headers
+    $replyHeaders = (Invoke-WebRequest -Uri $Url -UseBasicParsing -Method Head -TimeoutSec 5).Headers
   } catch {
     $errorResponse = $_.Exception.Response
     if (-not $errorResponse) { throw }
