@@ -22,18 +22,20 @@ const path = require("node:path");
 const { Client } = require("pg");
 const { runMigrations } = require("../database/migrate");
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const { describeTarget } = require("./helpers/databaseTarget");
+
 const repoRoot = path.join(__dirname, "..");
+// A smoke that never ends (an open connection pool, a lock nobody releases) must fail the run, not freeze it.
+const SCRIPT_TIMEOUT_MS = 5 * 60_000;
 
 async function main() {
   const scripts = process.argv.slice(2);
   if (scripts.length === 0) throw new Error("用法：node scripts/with-temp-schema.js <smoke 腳本> [更多腳本...]");
   if (!process.env.DATABASE_URL) throw new Error("需要設定 DATABASE_URL 才知道要連哪個資料庫。");
 
-  const target = new URL(process.env.DATABASE_URL);
-  const hostOverridden = target.searchParams.has("host") || target.searchParams.has("hostaddr");
-  if (!LOCAL_HOSTS.has(target.hostname) || hostOverridden) {
-    throw new Error(`拒絕執行：${target.hostname} 不是本機資料庫。這個執行器會建立並刪除 schema，只能用在本機。`);
+  const target = describeTarget(process.env.DATABASE_URL);
+  if (!target.isLocal) {
+    throw new Error(`拒絕執行：${target.host} 不是本機資料庫。這個執行器會建立並刪除 schema，只能用在本機。`);
   }
 
   const schema = `temp_smoke_${randomUUID().replace(/-/g, "_")}`;
@@ -51,11 +53,13 @@ async function main() {
     for (const script of scripts) {
       const result = spawnSync(process.execPath, [script], {
         cwd: repoRoot, env: { ...process.env, DATABASE_URL: scriptUrl.toString() }, encoding: "utf8",
+        timeout: SCRIPT_TIMEOUT_MS,
       });
       const ok = result.status === 0;
       console.log(`\n${ok ? "通過" : "失敗"}  ${script}`);
-      if (result.stdout.trim()) console.log(result.stdout.trim());
-      if (!ok && result.stderr.trim()) console.log(result.stderr.trim());
+      if (result.stdout?.trim()) console.log(result.stdout.trim());
+      if (result.error) console.log(`無法完成：${result.error.code === "ETIMEDOUT" ? `超過 ${SCRIPT_TIMEOUT_MS / 1000} 秒沒結束，已強制停止` : result.error.message}`);
+      if (!ok && result.stderr?.trim()) console.log(result.stderr.trim());
       if (!ok) failed += 1;
     }
   } finally {

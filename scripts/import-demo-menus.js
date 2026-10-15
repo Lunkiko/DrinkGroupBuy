@@ -27,7 +27,7 @@ require("../backend/auth"); // loads backend/.env for variables that are not alr
 const { createRuntimeDatabaseAdapter } = require("../backend/database");
 const { createMerchantMenuImportRepository } = require("../backend/database/repositories/merchantMenuImportRepository");
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const { describeTarget } = require("./helpers/databaseTarget");
 const BUSY_ACTIVITY_STATUSES = ["draft", "recruiting", "confirmed", "ordering", "ready_for_pickup"];
 const OPTION_TYPES = new Set(["sweetness", "ice", "size", "topping"]);
 const DEFAULT_FILE = path.join(__dirname, "..", "database", "demo-menu", "menus.json");
@@ -50,18 +50,6 @@ function parseArguments(argv) {
     }
   }
   return options;
-}
-
-function describeTarget(databaseUrl) {
-  const url = new URL(databaseUrl);
-  // pg lets a ?host= / ?hostaddr= query parameter override the host in the URL, so a URL that says
-  // "localhost" could still connect somewhere else; treat any such override as remote.
-  const hostOverridden = url.searchParams.has("host") || url.searchParams.has("hostaddr");
-  return {
-    host: hostOverridden ? `${url.hostname}（連線參數改指定了其他主機）` : url.hostname,
-    database: url.pathname.replace(/^\//, ""),
-    isLocal: LOCAL_HOSTS.has(url.hostname) && !hostOverridden,
-  };
 }
 
 // Same rules the admin import page enforces on a pasted menu (validateMenuItemInput in backend/server.js),
@@ -103,26 +91,67 @@ function validateMenusFile(data) {
   return problems;
 }
 
-function fingerprint(items) {
-  return JSON.stringify(
-    items.map((item) => [item.name, item.category, Number(item.basePrice), item.description || null]).sort((a, b) => a[0].localeCompare(b[0])),
-  );
+// One comparable text for a whole live menu: items with their option groups (limits included) and options (price
+// deltas and order included). Used for the file and for what the database holds, so "already the same" means the
+// same menu a customer would see, not just the same drink names.
+function menuSignature(items) {
+  return JSON.stringify(items
+    .map((item) => [
+      item.name, item.category, Number(item.basePrice), item.description || null,
+      [...item.groups]
+        .sort((left, right) => left.optionType.localeCompare(right.optionType))
+        .map((group) => [group.optionType, Number(group.minSelections), Number(group.maxSelections),
+          group.options.map((option) => [option.label, Number(option.priceDelta), option.isAvailable !== false])]),
+    ])
+    .sort((left, right) => left[0].localeCompare(right[0])));
+}
+
+// Only the items a customer would see: the repository stores an item with its own isAvailable flag, so an item
+// marked unavailable in the file is inserted but is not live.
+function liveFileItems(store) {
+  return store.items
+    .filter((item) => item.isAvailable)
+    .map((item) => ({ ...item, groups: item.customizationGroups }));
+}
+
+async function loadLiveMenu(database, storeId) {
+  const items = (await database.query(
+    "SELECT id, name, category, base_price, description FROM menu_items WHERE store_id = $1 AND is_available = true", [storeId],
+  )).rows;
+  const itemIds = items.map((row) => row.id);
+  if (itemIds.length === 0) return [];
+  const rules = (await database.query(
+    "SELECT menu_item_id, option_type, min_selections, max_selections FROM menu_item_customization_rules WHERE menu_item_id = ANY($1::text[])",
+    [itemIds],
+  )).rows;
+  const options = (await database.query(
+    "SELECT menu_item_id, option_type, label, price_delta, is_available FROM customization_options "
+    + "WHERE menu_item_id = ANY($1::text[]) ORDER BY menu_item_id, option_type, sort_order, id",
+    [itemIds],
+  )).rows;
+  return items.map((row) => ({
+    name: row.name, category: row.category, basePrice: row.base_price, description: row.description,
+    groups: rules.filter((rule) => rule.menu_item_id === row.id).map((rule) => ({
+      optionType: rule.option_type, minSelections: rule.min_selections, maxSelections: rule.max_selections,
+      options: options
+        .filter((option) => option.menu_item_id === row.id && option.option_type === rule.option_type)
+        .map((option) => ({ label: option.label, priceDelta: option.price_delta, isAvailable: option.is_available })),
+    })),
+  }));
 }
 
 async function planStore(database, storeId, store) {
   const storeRow = (await database.query("SELECT id, name FROM stores WHERE id = $1", [storeId])).rows[0];
   if (!storeRow) return { storeId, action: "skip", reason: "資料庫裡沒有這間店" };
-  const current = (await database.query(
-    "SELECT name, category, base_price, description FROM menu_items WHERE store_id = $1 AND is_available = true", [storeId],
-  )).rows;
+  const current = await loadLiveMenu(database, storeId);
+  const incoming = liveFileItems(store);
   const busy = (await database.query(
     "SELECT COUNT(*)::integer AS n FROM group_buy_activities WHERE store_id = $1 AND status = ANY($2::text[])",
     [storeId, BUSY_ACTIVITY_STATUSES],
   )).rows[0].n;
-  const base = { storeId, name: storeRow.name, currentCount: current.length, newCount: store.items.length };
+  const base = { storeId, name: storeRow.name, currentCount: current.length, newCount: incoming.length };
   if (busy > 0) return { ...base, action: "skip", reason: `有 ${busy} 場進行中的團購，不動這間店的菜單` };
-  const currentPrint = fingerprint(current.map((row) => ({ name: row.name, category: row.category, basePrice: row.base_price, description: row.description })));
-  if (currentPrint === fingerprint(store.items)) return { ...base, action: "skip", reason: "菜單已經跟檔案一樣" };
+  if (menuSignature(current) === menuSignature(incoming)) return { ...base, action: "skip", reason: "菜單已經跟檔案一樣" };
   return { ...base, action: "import" };
 }
 

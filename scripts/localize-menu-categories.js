@@ -21,25 +21,13 @@ require("../backend/auth"); // loads backend/.env for variables that are not alr
 const { randomUUID } = require("node:crypto");
 const { createRuntimeDatabaseAdapter } = require("../backend/database");
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const { describeTarget } = require("./helpers/databaseTarget");
 const CATEGORY_MAP = [
   ["coffee", "咖啡類"],
   ["fruit", "果茶類"],
   ["milk_tea", "鮮奶茶類"],
   ["tea", "茶類"],
 ];
-
-function describeTarget(databaseUrl) {
-  const url = new URL(databaseUrl);
-  // pg lets a ?host= / ?hostaddr= query parameter override the host in the URL, so a URL that says
-  // "localhost" could still connect somewhere else; treat any such override as remote.
-  const hostOverridden = url.searchParams.has("host") || url.searchParams.has("hostaddr");
-  return {
-    host: hostOverridden ? `${url.hostname}（連線參數改指定了其他主機）` : url.hostname,
-    database: url.pathname.replace(/^\//, ""),
-    isLocal: LOCAL_HOSTS.has(url.hostname) && !hostOverridden,
-  };
-}
 
 async function countByStoreAndCategory(database) {
   const result = await database.query(`

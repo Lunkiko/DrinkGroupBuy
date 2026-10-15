@@ -1558,3 +1558,34 @@
 
 **這次沒審查到／沒驗證到的部分**：VM 上的實際設定（尚未部署）、學校邊界防火牆是否放行 3000 埠、HTTPS 方案、遠端桌面的實際強度、`/api/admin/` 在開關開啟時對遠端管理用途的影響（預期行為：只能本機使用）。
 
+
+---
+
+## 2026-10-15 — 標記可取餐故障修復與加固：500 錯誤回應與日誌、取餐碼配發鎖、部署前測試關卡
+
+**範圍**：`backend/server.js` 的共用錯誤處理（所有路由，含登入與付款）、`backend/database/repositories/pickupCredentialRepository.js`、`.github/workflows/main_drinkgroupbuy-demo-api.yml`、新增的 `scripts/with-temp-schema.js`、`scripts/import-demo-menus.js`、`scripts/localize-menu-categories.js`
+**觸發原因**：使用者在 Azure 版按「全部標記可取餐」得到通用錯誤。重現後發現是 10/1 推播功能（fe94245）加的 `LEFT JOIN` 搭配 `FOR UPDATE` 被 PostgreSQL 拒絕，所有 PostgreSQL 環境的標記可取餐從此一律失敗；修好後依 `/code-review` 的結果補強。共用錯誤處理會影響登入與付款路由對外揭露的內容，所以依 `AGENTS.md` 留記錄。
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 中 | `backend/server.js` 共用 catch | 未預期的錯誤以 `error.message` 原文回給用戶端，且完全不寫日誌：資料庫錯誤的 SQL 文字會洩漏給呼叫者，伺服器端也查不到（這次故障兩週沒被發現的原因） | 日誌記 `[request-error] 方法 路徑`（不含問號後的參數）；回應只給 `internal_error`，僅 `AUTH_DEV_MODE` 開啟時才回原文；用真實伺服器驗證兩種模式 | 已修 |
+| 低 | `backend/server.js` 共用 catch（第一版修法） | 日誌記整個錯誤物件，PostgreSQL 錯誤的 `detail` 欄位會重複出錯的欄位值（例如唯一性衝突中的電子郵件） | 只記 `code`、`message`、`stack` | 已修 |
+| 中 | `.github/workflows/…yml` | 部署流程完全不跑測試：推上 main 的程式碼直接上線，10/1 的故障版本就是這樣上線的 | 新增獨立的 `test` 工作（`npm ci`、建立 SQLite 開發資料庫、`npm test`、SQL 安全檢查、PostgreSQL 服務容器上跑 `npm run test:db`），`deploy` 要等它通過。用「乾淨複本、UTC 時區」模擬 CI 時又抓到兩個會讓關卡一開始就誤擋或漏檢的問題：`npm test` 的 `backend/**/*.test.js` 在 CI 的 shell 只匹配一層資料夾（`backend/database/repositories/` 底下的測試會被悄悄略過），改成加引號讓 Node 自己展開；3 個 LINE Pay 測試依賴被 Git 忽略的 SQLite 開發資料庫，CI 要先 `npm run db:init` | 已修 |
+| 低 | `pickupCredentialRepository.js` | 取餐碼配發是「先查再寫」，兩個同時操作可能抽到同一組；資料庫有 `idx_pickup_credentials_active_code` 唯一索引，所以不會存進重複碼，後果是後到的整筆標記失敗 | 配發前取得交易層級的 advisory lock | 已修 |
+| 低 | `pickupCredentialRepository.js` | 核銷最後一筆（先鎖訂單再更新活動）與標記可取餐（先鎖活動再鎖訂單）鎖定順序相反，理論上死結 | 偵測到 PostgreSQL `40P01` 就整筆重試，最多 2 次 | 已修 |
+| 低 | `scripts/with-temp-schema.js` 等腳本 | 會建立與刪除 schema 的執行器若連到遠端資料庫會很危險 | 只准連本機（含連線參數改指定主機的偵測）；判斷邏輯抽成共用檔並加單元測試 | 已修 |
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| SQL／注入 | 所有新增或改動的查詢都用 `$n` 參數；advisory lock 的鍵是固定字串；`npm run check:sql-safety` 通過 |
+| 授權 | 標記可取餐仍以 `merchant_users` 驗證商家能管理該活動（`can_manage`），這次只改鎖定範圍（`FOR UPDATE OF activity`），不影響檢查 |
+| 回應內容 | 開發登入模式在 VM 與 Azure 都是關閉，所以兩處都只回 `internal_error`；已驗證原文只在 `AUTH_DEV_MODE=true` 時出現 |
+| 資料庫誤傷 | 真實資料庫測試一律在一次性暫時 schema 裡執行，執行器拒絕非本機資料庫；測試後確認開發資料庫沒有殘留 schema |
+
+**審查過程中更正的誤判**：我一度報告「取餐碼沒有唯一索引，可能核銷到別人的訂單」，這是錯的（我的搜尋漏掉了跨多行的索引定義）。實際有唯一索引，後果只是同時標記時後到的那次失敗，嚴重度已據此下修。另外我先前把「GitHub 建置結果 success」當成程式碼正常的證據，這也不成立：當時的流程不跑任何測試，success 只代表檔案上傳並部署成功。
+
+**這次沒審查到／沒驗證到的部分**：`test` 工作在 GitHub 上的第一次實際執行結果（本機以乾淨複本與 UTC 時區模擬過）、Azure 上標記可取餐修正後的實機結果、PostgreSQL 在 Azure 受管理連線池（PgBouncer）下 advisory lock 的行為（交易層級鎖在連線池的交易模式下依官方說明可用，但沒有在 Azure 實測）。

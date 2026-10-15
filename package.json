@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node backend/server.js",
-    "test": "node --test backend/**/*.test.js mobile/tests/*.test.mjs scripts/helpers/*.test.js",
+    "test": "node --test \"backend/**/*.test.js\" \"mobile/tests/*.test.mjs\" \"scripts/helpers/*.test.js\"",
     "backend:start": "node backend/server.js",
     "mobile:web": "npm --prefix mobile run web",
     "mobile:apk": "node scripts/build-android-apk.js",
@@ -52,7 +52,7 @@
     "customer-savings-postgres:smoke": "node scripts/customer-savings-postgres-smoke.js",
     "merchant-statistics-postgres:smoke": "node scripts/merchant-statistics-postgres-smoke.js",
     "admin-statistics-postgres:smoke": "node scripts/admin-statistics-postgres-smoke.js",
-    "test:db": "node scripts/with-temp-schema.js scripts/pickup-credential-postgres-smoke.js scripts/pickup-concurrency-postgres-smoke.js",
+    "test:db": "node scripts/with-temp-schema.js scripts/pickup-credential-postgres-smoke.js scripts/pickup-concurrency-postgres-smoke.js scripts/import-demo-menus-postgres-smoke.js",
     "demo-data": "node scripts/seed-demo-data.js",
     "demo-menus": "node scripts/import-demo-menus.js",
     "menu-categories:localize": "node scripts/localize-menu-categories.js",

@@ -25,7 +25,7 @@ const {
 } = require("../backend/database/repositories/customerSavingsRepository");
 const { DEMO_PREFIX, buildDemoData } = require("./helpers/demoDataBuilder");
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const { describeTarget } = require("./helpers/databaseTarget");
 const REQUIRED_MIGRATION_COLUMN = { table: "promotion_tiers", column: "discount_percent" };
 const IDENTIFIER = /^[a-z_]+$/;
 
@@ -76,19 +76,6 @@ function parseArguments(argv) {
     }
   }
   return options;
-}
-
-function describeTarget(databaseUrl) {
-  const url = new URL(databaseUrl);
-  const host = url.hostname;
-  // pg lets a ?host= / ?hostaddr= query parameter override the host in the URL, so a URL that says
-  // "localhost" could still connect somewhere else; treat any such override as remote.
-  const hostOverridden = url.searchParams.has("host") || url.searchParams.has("hostaddr");
-  return {
-    host: hostOverridden ? `${host}（連線參數改指定了其他主機）` : host,
-    database: url.pathname.replace(/^\//, ""),
-    isLocal: LOCAL_HOSTS.has(host) && !hostOverridden,
-  };
 }
 
 async function ensureSchemaReady(database) {

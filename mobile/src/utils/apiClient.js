@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { saveAuthSession } from "./authSession";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import { getOrderWriteErrorMessage } from "./orderWriteErrors";
+import { describeApiError } from "./apiErrorText";
 import { isDemoMode } from "./demoMode";
 import { demoCustomerSavings, demoMenu, demoMerchantStatistics } from "../mock/demoContent";
 import { createDemoGroupBuyActivity, createDemoMenuItem, getDemoMerchantMenu, updateDemoMenuItem } from "../mock/demoBackend";
@@ -52,7 +53,7 @@ export async function loginWithFirebaseIdToken(idToken) {
 
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Firebase login failed");
+    const error = new Error(describeApiError(payload.error) ?? "Firebase login failed");
     error.payload = payload;
     throw error;
   }
@@ -77,7 +78,7 @@ export async function submitMerchantApplication(input) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Merchant application failed");
+    const error = new Error(describeApiError(payload.error) ?? "Merchant application failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -89,7 +90,7 @@ export async function listDevAuthUsers() {
   const response = await fetch(`${backendBaseUrl}/api/auth/dev-users`);
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "List dev users failed");
+    const error = new Error(describeApiError(payload.error) ?? "List dev users failed");
     error.payload = payload;
     throw error;
   }
@@ -108,7 +109,7 @@ export async function loginWithDevUser(userId) {
 
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Dev login failed");
+    const error = new Error(describeApiError(payload.error) ?? "Dev login failed");
     error.payload = payload;
     throw error;
   }
@@ -132,7 +133,7 @@ export async function verifyAuthSession() {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Session verification failed");
+    const error = new Error(describeApiError(payload.error) ?? "Session verification failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -147,7 +148,7 @@ export async function getDevBusinessTime() {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload.message ?? payload.error ?? "Get dev business time failed");
+    const error = new Error(payload.message ?? describeApiError(payload.error) ?? "Get dev business time failed");
     error.payload = payload;
     throw error;
   }
@@ -172,7 +173,7 @@ export async function createGroupBuyActivity(input) {
 
     const payload = await response.json();
     if (!response.ok) {
-      const error = new Error(payload.error ?? "Create group-buy activity failed");
+      const error = new Error(describeApiError(payload.error) ?? "Create group-buy activity failed");
       error.status = response.status;
       error.payload = payload;
       throw error;
@@ -188,7 +189,7 @@ export async function listGroupBuyActivities() {
     const response = await fetch(`${backendBaseUrl}/api/group-buy-activities`);
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error ?? "List group-buy activities failed");
+      throw new Error(describeApiError(payload.error) ?? "List group-buy activities failed");
     }
 
     return payload.activities;
@@ -201,7 +202,7 @@ export async function listStores() {
     const response = await fetch(`${backendBaseUrl}/api/stores`);
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error ?? "List stores failed");
+      throw new Error(describeApiError(payload.error) ?? "List stores failed");
     }
 
     return payload.stores;
@@ -224,7 +225,7 @@ export async function getCustomerSavings() {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Get customer savings failed");
+    const error = new Error(describeApiError(payload.error) ?? "Get customer savings failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -243,7 +244,7 @@ export async function registerPushToken(expoPushToken, platform) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Register push token failed");
+    const error = new Error(describeApiError(payload.error) ?? "Register push token failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -264,7 +265,7 @@ async function getOrderListRequest(path, input) {
   const response = await fetch(`${backendBaseUrl}${path}?${query}`, { headers: withAuthHeaders() });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Get order list failed");
+    const error = new Error(describeApiError(payload.error) ?? "Get order list failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -279,7 +280,7 @@ export async function getMerchantStoreStatistics(storeId) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Get merchant statistics failed");
+    const error = new Error(describeApiError(payload.error) ?? "Get merchant statistics failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -316,7 +317,7 @@ async function getMenuRequest(path, authenticated) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Get store menu failed");
+    const error = new Error(describeApiError(payload.error) ?? "Get store menu failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -332,7 +333,7 @@ async function writeMenuItemRequest(path, method, body) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Save menu item failed");
+    const error = new Error(describeApiError(payload.error) ?? "Save menu item failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -370,7 +371,7 @@ export async function getOrder(orderId) {
     });
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error ?? "Get order failed");
+      throw new Error(describeApiError(payload.error) ?? "Get order failed");
     }
 
     return payload.order;
@@ -429,7 +430,7 @@ export async function cancelOrder(orderId, input) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Cancel order failed");
+    const error = new Error(describeApiError(payload.error) ?? "Cancel order failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -448,7 +449,7 @@ export async function cancelMerchantGroupBuyActivity(activityId, input) {
   );
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Cancel group-buy activity failed");
+    const error = new Error(describeApiError(payload.error) ?? "Cancel group-buy activity failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -462,7 +463,7 @@ export async function getPickupOverdueRule() {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Pickup overdue rule load failed");
+    const error = new Error(describeApiError(payload.error) ?? "Pickup overdue rule load failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -483,7 +484,7 @@ export async function requestLinePayAuthorization(input) {
 
     const payload = await response.json();
     if (!response.ok) {
-      const error = new Error(payload.error ?? "LINE Pay authorization request failed");
+      const error = new Error(describeApiError(payload.error) ?? "LINE Pay authorization request failed");
       error.payload = payload;
       throw error;
     }
@@ -505,7 +506,7 @@ export async function requestLinePayRepayment(input) {
 
     const payload = await response.json();
     if (!response.ok) {
-      const error = new Error(payload.error ?? "LINE Pay repayment request failed");
+      const error = new Error(describeApiError(payload.error) ?? "LINE Pay repayment request failed");
       error.payload = payload;
       throw error;
     }
@@ -539,7 +540,7 @@ export async function getPickupCredential(orderId) {
   );
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Get pickup credential failed");
+    const error = new Error(describeApiError(payload.error) ?? "Get pickup credential failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -558,7 +559,7 @@ export async function createMerchantRefundRequest(orderId, input) {
   );
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Create refund request failed");
+    const error = new Error(describeApiError(payload.error) ?? "Create refund request failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -574,7 +575,7 @@ export async function listMerchantRefundRequests(storeId, input = {}) {
   );
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "List refund requests failed");
+    const error = new Error(describeApiError(payload.error) ?? "List refund requests failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -590,7 +591,7 @@ async function postPickupRequest(path, body) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(payload.error ?? "Pickup request failed");
+    const error = new Error(describeApiError(payload.error) ?? "Pickup request failed");
     error.status = response.status;
     error.payload = payload;
     throw error;

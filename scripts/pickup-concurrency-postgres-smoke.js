@@ -51,7 +51,7 @@ async function main() {
   const database = createRuntimeDatabaseAdapter({ runtime: "postgres" });
   const repository = createPickupCredentialRepository({ runtime: "postgres", database: withCodeCheckBarrier(database) });
   try {
-    const { merchantUserId, customerUserId } = await createFixture(database);
+    const { merchantUserId } = await createFixture(database);
 
     // 1. Two simultaneous mark-ready calls must not share a pickup code.
     const results = await Promise.all([activities.codeA, activities.codeB].map((activity) =>
@@ -87,10 +87,16 @@ async function main() {
     assert.ok(!again.some((group) => [activities.soonByStart.id, activities.soonByEnd.id].includes(group.activityId)), "a second run must not remind the same orders again");
 
     console.log("PostgreSQL pickup concurrency proof passed: distinct codes under concurrency, scheduler pre-filters match the expiry rule.");
-    void customerUserId;
   } finally {
-    await cleanup(database);
-    await database.close();
+    try {
+      await cleanup(database);
+    } catch (cleanupError) {
+      // Reported and counted as a failure, but never allowed to replace the test's own error.
+      console.error("cleanup failed:", cleanupError.message);
+      process.exitCode = process.exitCode || 1;
+    } finally {
+      await database.close();
+    }
   }
 }
 
@@ -161,7 +167,7 @@ async function createFixture(database) {
       `, [activity.orderId, activity.id, customer.id, activity.orderPickupStatus, new Date(nowMs).toISOString()]);
     }
   });
-  return { merchantUserId: merchant.user_id, customerUserId: customer.id };
+  return { merchantUserId: merchant.user_id };
 }
 
 async function cleanup(database) {

@@ -2759,9 +2759,13 @@ const server = http.createServer(async (request, response) => {
     }
     // Log what failed, without the query string (callbacks carry transaction ids there). The response used to
     // carry error.message and nothing was logged, so a database error hid for two weeks and its SQL text reached
-    // clients. Only the local dev mode still shows the message.
-    console.error(`[request-error] ${request.method} ${String(request.url || "").split("?")[0]}`, error);
-    sendJson(response, 500, { error: isDevAuthModeEnabled() ? error.message : "internal_error" });
+    // clients. Only the local dev mode still shows the message. Just code, message and stack are logged, not the
+    // whole error object: a PostgreSQL error's detail field repeats the offending values (an email address in a
+    // unique-violation, for example).
+    console.error(`[request-error] ${request.method} ${String(request.url || "").split("?")[0]}`, {
+      code: error?.code, message: error?.message, stack: error?.stack
+    });
+    sendJson(response, 500, { error: isDevAuthModeEnabled() ? error?.message : "internal_error" });
   }
 });
 
