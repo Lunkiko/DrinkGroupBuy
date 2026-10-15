@@ -136,4 +136,4 @@ Azure Portal → Microsoft Entra ID → App registrations → 這個部署用的
 ### 3. 好習慣
 
 - 擁有者自己改程式也開 PR，不直接推 `main`，這樣測試才會在合併前跑。
-- 舊的 `claude/*` 分支確認已合併後再刪，避免新人搞不清楚哪條是現行的。
+- PR 合併後把用完的分支刪掉（PR 頁面有 **Delete branch** 按鈕），分支清單才不會越積越多。想保留的舊內容改打標籤（`archive/` 開頭），不要留成分支。
