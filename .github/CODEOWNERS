@@ -1,0 +1,37 @@
+# 這些路徑的改動，合併前一定要 @Lunkiko 審過。
+# 前提：GitHub 的 main 分支保護要勾選「Require review from Code Owners」，這個檔案才會生效
+# （設定步驟見 docs/ui-collaboration.md）。
+#
+# 規則是「最後一條符合的生效」，所以這裡沒列到的路徑（畫面、元件、主題、素材）不需要擁有者審，
+# 只受分支保護的「至少 1 人核准」限制。
+
+# 後端 API、金流、登入驗證
+/backend/
+
+# 資料庫結構與遷移（遷移編號撞號、改到正式資料都是高風險）
+/database/
+
+# 部署、備份、VM 安裝等腳本
+/scripts/
+
+# CI／部署設定本身：誰能改這裡，誰就能改部署流程
+/.github/
+
+# 套件與原生設定：新增或更新套件、改 app.config.js 都要重新打包 APK，EAS Update 推不出去
+/package.json
+/package-lock.json
+/mobile/package.json
+/mobile/package-lock.json
+/mobile/app.config.js
+/mobile/eas.json
+
+# 影響全部畫面的共用層：API 呼叫、全域狀態、導覽
+/mobile/src/utils/apiClient.js
+/mobile/src/state/
+/mobile/src/navigation/
+
+# 專案規則與安全記錄
+/AGENTS.md
+/CLAUDE.md
+/docs/AI-security-review-log.md
+/docs/payment-rules-and-flow.md

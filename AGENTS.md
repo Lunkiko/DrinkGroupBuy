@@ -65,5 +65,6 @@ DrinkGroupBuy 是仍在開發中的 Android-first 手搖飲團購系統：`mobil
 
 - 欄位精確定義只維護在 `docs/AI-database-field-spec.md`；其他 database docs 連結它，不重抄欄位表。
 - 只有使用者流程、API、schema、status、核心規則、重大限制或架構真的改變時，才更新相應文件；不要把 Git history 複製成 changelog 型 Context。
+- 多人協作走「個人分支 → Pull Request → 擁有者審核後合併」，不直接推 `main`（推上 `main` 會自動部署）。畫面組員的可改範圍、離線展示模式與 PR 檢查清單見 `docs/ui-collaboration.md`；組員的 AI 工具（Codex 等）的逐步推送規則見 `docs/codex-teammate-guide.md`；`backend/`、`database/`、`scripts/`、`.github/`、套件與原生設定的改動需擁有者核准（`.github/CODEOWNERS`）。
 - 同一個 implementation task 同時只有一位主要修改者。其他 Agent 可 review 或 validation，但未經要求不順便大改。跨 Agent 的長期資訊必須落在 source、Git 或共享文件，不能只留在 chat memory。
 - 修改前先列出預計檔案、原因與不碰的範圍；修改後列出實際檔案、摘要、假設、未決問題與下一步。
