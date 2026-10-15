@@ -2757,7 +2757,11 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, error.statusCode, error.payload);
       return;
     }
-    sendJson(response, 500, { error: error.message });
+    // Log what failed, without the query string (callbacks carry transaction ids there). The response used to
+    // carry error.message and nothing was logged, so a database error hid for two weeks and its SQL text reached
+    // clients. Only the local dev mode still shows the message.
+    console.error(`[request-error] ${request.method} ${String(request.url || "").split("?")[0]}`, error);
+    sendJson(response, 500, { error: isDevAuthModeEnabled() ? error.message : "internal_error" });
   }
 });
 

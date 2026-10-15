@@ -83,12 +83,29 @@ async function withPostgresPickupOperationLock(database, input = {}, operation) 
     throw error;
   }
   try {
-    return await operation();
+    return await runWithDeadlockRetry(operation);
   } finally {
     await database.query(`
       DELETE FROM operation_locks
       WHERE lock_key = $1 AND owner_id = $2
     `, [lockKey, ownerId]);
+  }
+}
+
+// Mark-ready locks the activity row and then the order rows, while redeeming the last order locks the order
+// and then updates the activity, so the two can wait on each other. PostgreSQL resolves that by aborting one
+// transaction with 40P01; the abort rolls back cleanly, so running the whole operation again is safe.
+const DEADLOCK_ERROR_CODE = "40P01";
+const DEADLOCK_RETRY_LIMIT = 2;
+
+async function runWithDeadlockRetry(operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error?.code !== DEADLOCK_ERROR_CODE || attempt >= DEADLOCK_RETRY_LIMIT) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+    }
   }
 }
 
@@ -389,6 +406,12 @@ async function findMerchantCredentialPostgres(database, pickupCode, actorUserId,
 }
 
 async function generateAvailablePostgresCode(transaction) {
+  // The existence check below cannot see a code another transaction has picked but not committed yet. The unique
+  // index idx_pickup_credentials_active_code keeps two active credentials from sharing a code, but it does that by
+  // failing the later INSERT, which would fail that whole mark-ready call. The advisory lock lets one allocation
+  // at a time through; it is released when this transaction ends, so the next one sees the committed codes and
+  // picks another.
+  await transaction.query("SELECT pg_advisory_xact_lock(hashtext('pickup-credential-code-allocation'))");
   for (let attempt = 0; attempt < 32; attempt += 1) {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     const exists = await transaction.query(`
@@ -405,13 +428,17 @@ async function listDueActivitiesPostgres(database, input = {}) {
   const now = input.now || new Date().toISOString();
   const nowTime = Date.parse(now);
   const limit = normalizePositiveInteger(input.limit, 20);
+  if (Number.isNaN(nowTime)) return [];
 
+  // An activity expires at min(pickup_start_at + 3 h, pickup_end_at) (calculatePickupExpirationAt), so it is due
+  // exactly when either of the two is already past. The exact check still runs in JavaScript below.
   const result = await database.query(`
     SELECT id, status, pickup_start_at, pickup_end_at
     FROM group_buy_activities
     WHERE status IN ('ordering', 'ready_for_pickup')
+      AND (pickup_end_at <= $1::timestamptz OR pickup_start_at + interval '3 hours' <= $1::timestamptz)
     ORDER BY pickup_start_at ASC
-  `);
+  `, [now]);
 
   return result.rows
     .map((row) => {
@@ -446,13 +473,19 @@ async function claimPickupRemindersPostgres(database, input = {}) {
   const leadMs = (Number.isFinite(leadMinutes) && leadMinutes > 0 ? leadMinutes : 30) * 60_000;
   if (Number.isNaN(nowTime)) return [];
 
+  // Only activities whose expiry (min(pickup_start_at + 3 h, pickup_end_at)) falls inside (now, now + lead] can
+  // qualify, so either the end or the start + 3 h must land in that window. The exact check stays in JavaScript.
+  const windowEnd = new Date(nowTime + leadMs).toISOString();
   const activitiesResult = await database.query(`
     SELECT activity.id, activity.title, activity.pickup_start_at, activity.pickup_end_at,
       store.name AS store_name
     FROM group_buy_activities activity
     JOIN stores store ON store.id = activity.store_id
     WHERE activity.status IN ('ordering', 'ready_for_pickup')
-  `);
+      AND ((activity.pickup_end_at > $1::timestamptz AND activity.pickup_end_at <= $2::timestamptz)
+        OR (activity.pickup_start_at + interval '3 hours' > $1::timestamptz
+          AND activity.pickup_start_at + interval '3 hours' <= $2::timestamptz))
+  `, [now, windowEnd]);
   const closingSoonByActivityId = new Map();
   for (const row of activitiesResult.rows) {
     const expiresAt = calculatePickupExpirationAt(toIsoString(row.pickup_start_at), toIsoString(row.pickup_end_at));

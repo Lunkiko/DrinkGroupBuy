@@ -550,8 +550,13 @@ function getPickupErrorMessage(error) {
     credential_not_found: "找不到有效的取餐碼。",
     credential_already_redeemed: "這組取餐碼已經使用過。",
     credential_expired: "這組取餐碼已經過期。",
-    order_not_ready_for_pickup: "這筆訂單目前尚不可取餐。"
+    order_not_ready_for_pickup: "這筆訂單目前尚不可取餐。",
+    operation_locked: "系統正在處理這筆團購，請等幾秒再試一次。",
+    activity_already_changed: "這筆團購的狀態剛剛已經變更，請下拉重新整理後再確認。",
+    credential_already_changed: "這組取餐碼剛剛已經被處理過，請重新整理後再確認。"
   };
+  // An unknown code is shown so a screenshot is enough to tell which failure it was.
+  if (!messages[errorCode] && errorCode) return `取餐操作失敗，請稍後再試。（代碼：${errorCode}）`;
   return messages[errorCode] || "取餐操作失敗，請稍後再試。";
 }
 

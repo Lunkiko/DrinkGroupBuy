@@ -89,7 +89,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\sync-vm-clock.ps1            
 powershell -ExecutionPolicy Bypass -File .\scripts\sync-vm-clock.ps1 -Register   # 開機後與每 15 分鐘自動執行（以 SYSTEM 身分）
 ```
 
-`-DryRun` 應印出各來源的讀數與 `OK` 或 `Would correct`。`-Unregister` 可移除排程任務。**本機（Windows PowerShell 5.1）已測過**：各分支（正常、偏差、來源不足、來源矛盾、偏差過大、非管理員）、排程任務註冊與經由排程器執行；**在 VM 上以 SYSTEM 身分實際執行還沒驗證過**。
+`-DryRun` 應印出各來源的讀數與 `OK` 或 `Would correct`。`-Unregister` 可移除排程任務。**本機（Windows PowerShell 5.1）已測過**：各分支（正常、偏差、來源不足、來源矛盾、偏差過大、非管理員）、排程任務註冊與經由排程器執行；**2026-10-12 已在 VM 上驗證**：乾跑四個來源（`www.google.com`、`oauth2.googleapis.com`、`exp.host`、`www.microsoft.com`）都連得到、偏差都在 1 秒內；註冊成功後，經排程器以 SYSTEM 身分執行一次，`LastTaskResult` 為 0，日誌出現新的 `OK`。
 
 ## 步驟二：確認系統授權還剩多久
 
@@ -297,6 +297,42 @@ npm run demo-data -- --focus-email <你的Google信箱>            # 先預覽�
 npm run demo-data -- --focus-email <你的Google信箱> --apply   # 確認後才寫入
 ```
 
+**展示用完整菜單**（基礎資料每家店只有 1～2 個品項，展示太單薄）：把 Azure 展示環境的菜單匯出成 `database/demo-menu/menus.json`（2026-10-14 匯出），`store-001` 到 `store-007` 共 106 個品項、1,284 個選項，每個品項都有甜度、冰量、尺寸、加料。分類用中文：顧客點餐畫面的分類標籤是直接顯示分類欄位的原文，所以 Azure 上原本的英文代碼（`coffee`→咖啡類、`fruit`→果茶類、`milk_tea`→鮮奶茶類、`tea`→茶類）匯出時已轉成 `store-002`、`store-007` 本來就在用的中文，同一家店不會有兩種寫法。`store-008`、`store-009` 只存在 Azure，VM 沒有。
+
+**一個指令匯入**（VM 的資料庫只接受本機連線，所以要在 VM 上做）。**先匯入菜單、再灌上面的歷史資料**，因為歷史訂單是用「當下的上架品項」產生的：
+
+```powershell
+cd C:\apps\DrinkGroupBuy
+git pull --ff-only
+powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1     # 先備份
+npm run demo-menus                 # 預覽：每家店 目前上架 N 項 → 換成 M 項，不寫入
+npm run demo-menus -- --apply      # 確認後才寫入
+```
+
+舊品項會下架（`is_available = false`），**不刪除**，歷史訂單的參照不會壞。有進行中團購（draft、recruiting、confirmed、ordering、ready_for_pickup）的店會被略過；菜單已經跟檔案一樣的店也會略過，所以重跑不會有任何改變。`--stores store-001,store-003` 可以只做幾家。與後台「匯入菜單」頁用的是同一個 repository。
+
+本機（Windows PowerShell 5.1 與 Node 24）用一次性的暫時 schema 測過：預覽不寫入、套用後品項與選項數量與檔案一致且每個品項 4 組選項規則（甜度、冰量、尺寸為必選一個，加料依選項數）、舊品項只下架、重跑沒有任何改變、有進行中團購的店被略過、非本機資料庫需要 `--allow-remote`、檔案有錯時整個拒絕。
+
+**Azure 的分類改成中文**（Azure 的 `store-001`、`003`、`004`、`005`、`006` 目前是英文代碼，`002`、`007`、`008`、`009` 已經是中文）：只改 `menu_items.category` 這一欄的文字（含已下架的舊品項），不動價格、品項、選項與訂單。這要連 Azure 資料庫，所以：
+
+1. Azure 入口網站 → PostgreSQL → 網路，把你這台電腦目前的公開 IP 加進防火牆規則（用完刪除）。
+2. 先備份（`pg_dump`，或入口網站的備份）。
+3. 在自己的電腦、同一個 PowerShell 視窗：
+
+```powershell
+$env:DATABASE_URL = "<Azure 的連線字串，含密碼，不要貼進對話或提交到 Git>"
+$env:DATABASE_SSL = "true"
+npm run menu-categories:localize -- --allow-remote            # 預覽：每家店 coffee → 咖啡類：N 筆
+npm run menu-categories:localize -- --allow-remote --apply    # 確認後才寫入
+Remove-Item Env:\DATABASE_URL, Env:\DATABASE_SSL
+```
+
+4. 到 Azure 入口網站把剛加的防火牆規則刪掉。
+
+重跑不會有改變（沒有英文代碼就印「不需要修改」）；寫入是單一交易，並留一筆 `admin_localize_menu_categories` 稽核紀錄。
+
+匯入後可用 `drink_group_buy` 帳號查每家店上架品項數（密碼從 `backend\.env` 的 `DATABASE_URL` 讀，不需要 `postgres` 超級使用者密碼）。
+
 ## 步驟七：安裝成開機自動啟動的服務
 
 管理員 PowerShell：
@@ -325,7 +361,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\backup-vm-database.ps1 -Regis
 1. **從校內網路測**：**使用對象只有校內網路的人**（專題展現場），所以只需要校內能連到，**不要求從網際網路連得到**。人在學校時，手機連**校內 Wi-Fi**，開瀏覽器到 `http://163.17.135.215:3000/health`，要看到 `{"ok":true,…}`。
    - **2026-10-09 實測（人在校外，手機用行動網路）**：`/health` 與 `/admin` 都一直轉圈、載不出來。防火牆規則已確認是 `Allow`、來源 `Any`，所以是學校邊界擋了從網際網路進來的 3000 埠，同一個邊界卻放行 3389（遠端桌面）。這對我們反而是好事：後端 API 不會被網際網路上的人連到。**因此行動網路連不到是預期的**，專題展現場請讓手機連校內 Wi-Fi。
    - 校內 Wi-Fi 也連不到：先確認 VM 防火牆規則 `DrinkGroupBuy Backend 3000` 是 `Allow`/`Any`（已確認過），再查是不是校內不同網段之間被擋；那就改用備案 APK（`--demo`）或另外找學校有放行的埠。
-   - **還沒在校內實測過**，這項要等人在學校時才能確認。
+   - **2026-10-12 已在校內實測通過**：手機連**校內 Wi-Fi**，`http://163.17.135.215:3000/health` 回 `{"ok":true,"service":"drink-group-buy-backend"}`；`http://163.17.135.215:3000/admin` 回 `{"error":"not_found"}`（`ADMIN_WEB_LOOPBACK_ONLY` 在真實 VM 上、從非本機的裝置驗證有效）。
 2. **打包 VM 專用 APK**（在你自己的電腦）：
 
    ```bash

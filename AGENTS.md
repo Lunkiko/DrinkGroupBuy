@@ -34,6 +34,7 @@ DrinkGroupBuy 是仍在開發中的 Android-first 手搖飲團購系統：`mobil
 - 只修改任務範圍；不因個人偏好更換 framework、architecture、dependency 或產品流程。
 - 優先採小型垂直切片，明確追蹤 mobile、API、service、database 與文件的實際串接；route、screen 或 schema 單獨存在不代表 E2E 完成。
 - 外部輸入一律驗證；不要以吞錯、放寬權限或寫死案例來讓錯誤消失。控制流程優先用 guard clause，只有意圖確實更清楚時才抽函式。
+- 改到 repository 的 SQL（尤其是取餐、付款、結算）時，除了 `npm test`，還要跑 `npm run test:db`：它在一次性暫時 schema 裡跑真實資料庫測試，不碰真實資料。`npm test` 用假資料庫，抓不到「SQL 被 PostgreSQL 拒絕」這類錯誤（2026-10-01 的標記可取餐就是這樣上線的）。
 - 修改後執行與風險相稱的 validation；沒有實際執行就不得宣稱通過。若檢查會重建 SQLite、產生 build artifact 或修改外部狀態，先說明並取得同意。
 - 不提交或輸出 secret。Backend secret 只放本機 `.env`／`backend/.env`；`EXPO_PUBLIC_*` 會進入 client bundle，不得放付款、Firebase Admin、session 或資料庫機密。
 - API JSON／frontend 使用 `camelCase`，database 使用 `snake_case`。新後端與資料庫概念使用 `groupBuyActivity`／`group_buy_activity`；不要擴大 mobile 既有 `deal` 相容名稱。
