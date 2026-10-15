@@ -17,7 +17,8 @@
 3. **不要強制推送**：不用 `--force`、`--force-with-lease`、`--no-verify`。
 4. **只有組員明確要你 commit／push 時才做。** 平常只改檔案、跑檢查，然後回報。
 5. **不要用 `git add .` 或 `git add -A`**，一律列出檔案名稱。
-6. **不要碰機密。** 不要建立、讀取、提交 `.env`、`google-services.json`、金鑰、token。需要登入 GitHub 時，請組員自己登入，不要把 token 寫進任何檔案或指令。
+6. **不要提交或顯示機密。** `.env`、`google-services.json`、金鑰、token 一律不放進 commit、PR、對話或日誌。需要登入 GitHub 時，請組員自己登入，不要把 token 寫進任何檔案或指令。
+   **唯一的例外**：組員改地圖畫面時，會在自己的 `mobile/.env` 放一行擁有者給的 `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=...`（網頁版地圖用，已限制只能在 `localhost` 使用）。你可以協助他建立這個檔案，但**不要印出金鑰的值、不要加入其他變數、不要 `git add` 它**（`.env` 已被 Git 忽略，用 `git status` 確認它沒有出現在變更清單裡）。
 7. **不要部署或打包**：不執行 `eas update`、`eas build`、`npm run mobile:apk`。這些由擁有者負責。
 8. **不要自己合併 PR**，也不要關閉別人的 PR。
 
