@@ -112,7 +112,7 @@ async function markReadyPostgres(database, input = {}) {
       FROM group_buy_activities activity
       LEFT JOIN stores store ON store.id = activity.store_id
       WHERE activity.id = $2
-      FOR UPDATE
+      FOR UPDATE OF activity
     `, [actorUserId, activityId]);
     const activity = activityResult.rows[0];
     if (!activity) return { error: "activity_not_found" };
