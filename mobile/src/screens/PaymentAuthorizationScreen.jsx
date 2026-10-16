@@ -42,7 +42,6 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
   const [pickupRuleAccepted, setPickupRuleAccepted] = useState(false);
   const [pickupRuleReloadKey, setPickupRuleReloadKey] = useState(0);
   const [pickupRuleContentExpanded, setPickupRuleContentExpanded] = useState(false);
-  const [pickupRuleContentViewed, setPickupRuleContentViewed] = useState(false);
   const pollIntervalRef = useRef(null);
   const pollTimeoutRef = useRef(null);
   const pollInFlightRef = useRef(false);
@@ -206,17 +205,11 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
               </CheckRow>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={pickupRuleContentExpanded ? "收合規則全文" : "展開閱讀規則全文"}
-                onPress={() => setPickupRuleContentExpanded((value) => {
-                  const next = !value;
-                  if (next) setPickupRuleContentViewed(true);
-                  return next;
-                })}
+                accessibilityLabel={pickupRuleContentExpanded ? "收合詳細資訊" : "展開詳細資訊"}
+                onPress={() => setPickupRuleContentExpanded((value) => !value)}
                 style={({ pressed }) => [styles.ruleConsentToggleRow, pressed && styles.pressed]}
               >
-                <Text style={styles.ruleConsentToggleText}>
-                  {pickupRuleContentExpanded ? "收合規則全文" : "展開閱讀規則全文"}
-                </Text>
+                <Text style={styles.ruleConsentToggleText}>詳細資訊</Text>
                 <View
                   importantForAccessibility="no-hide-descendants"
                   style={[styles.chevron, pickupRuleContentExpanded && styles.chevronUp]}
@@ -227,9 +220,6 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
                   <Text style={styles.ruleConsentContent}>{pickupRule.content}</Text>
                   <Text style={styles.ruleVersion}>規則版本：{pickupRule.ruleVersion}</Text>
                 </View>
-              ) : null}
-              {pickupRuleAccepted && !pickupRuleContentViewed ? (
-                <Notice tone="warning" message="請先展開閱讀規則全文，再進行付款。" />
               ) : null}
             </Card>
           ) : null}
@@ -267,13 +257,13 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
                     : "前往 LINE Pay 預授權"}
               disabled={Boolean(
                 repaymentState?.disabled
-                || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted || !pickupRuleContentViewed))
+                || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted))
               )}
               onPress={() => {
                 if (
                   linePayStatus === "loading"
                   || repaymentState?.disabled
-                  || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted || !pickupRuleContentViewed))
+                  || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted))
                 ) return;
                 const startPayment = isManualRepayment ? startLinePayRepayment : startPaymentAuthorization;
                 startPayment({
