@@ -31,7 +31,7 @@
 - 2026-08-04 商家儀表板、商家開團與開發補救畫面（`MerchantDashboardScreen`／`MerchantGroupBuyActivityCreateScreen`／`AdminDashboardScreen`）已改用 `appState.stores`（`GET /api/stores`）取代 `mobile/src/mock/stores.js`；該 mock 檔已移除。
 - 2026-08-04 已完成商家退款申請後端第一版：新增 `refund_requests` 資料表（`pending`／`approved`／`rejected`，同一筆請款同時只允許一筆 `pending` 申請）、`POST /api/merchant/orders/:orderId/refund-requests`（商家提出申請）、`GET /api/merchant/stores/:storeId/refund-requests`、`GET /api/admin/refund-requests`、`POST /api/admin/refund-requests/:requestId/approve`（重用既有 LINE Pay refund service）與 `POST /api/admin/refund-requests/:requestId/reject`；核准失敗時申請維持 `pending` 供重試。新增 `npm run refund-request:smoke` 覆蓋申請、重複申請阻擋、非門市商家阻擋、核准、重複核准阻擋與駁回情境。僅後端，尚未有商家／營運手機或後台 UI。
 - 已執行非強制 `npm audit fix`；最近一次結果為 Root `11` 項（`6 moderate`、`5 high`、`0 critical`），Mobile `46` 項（`1 low`、`11 moderate`、`33 high`、`1 critical`）。剩餘項目需要 Expo／React Native 或相關傳遞依賴的主版本升級，因此未使用 `--force` 破壞目前 Expo SDK 51 相容性。
-- 系統分析書已整理為五大功能，五組描述性綱目已更新，並已抽出 `docs/system-analysis-extracted.md`；各小節使用個案描述與活動圖仍待更新。
+- 系統分析書已整理為五大功能，五組描述性綱目已更新，並曾抽出 Markdown 版（已於 2026-10-16 移除，原因見下）；各小節使用個案描述與活動圖仍待更新。
 - 2026-08-05 開始新增信用卡（綠界 ECPay）預授權付款，與 LINE Pay 並存；當時 LINE Pay 分離式請款申請仍卡在官方審核，此為備援方案。詳見下方「2026-08-05 新增信用卡（ECPay）付款」。
 - **2026-07-31 LINE Pay 已回覆分離式請款開通**（測試商店 test_202606269512），**2026-08-08 已完成 Sandbox 人工端對端驗證**，`docs/line-pay-separated-capture-sandbox-checklist.md` 通過門檻（LP-01、LP-02、LP-04、LP-07、LP-08、LP-09、LP-10）全數通過。LINE Pay 分離式請款重新成為主要付款路徑；ECPay 維持並存的備援角色，不再是唯一可用路徑。`backend/.env` 目前本機已設定 `LINE_PAY_CAPTURE_SEPARATED=true`（僅本機開發驗證用，production 啟用需獨立評估）。
 - 2026-08-09 購物車客製化摘要已補上尺寸（例如「大杯 · 半糖 · 少冰 · 珍珠」）。付款畫面目前只顯示 LINE Pay 入口；ECPay 的 mobile 處理函式、API 與 backend 功能保留，之後可重新開啟 UI 入口。
@@ -388,6 +388,6 @@ database/test/drink-group-buy-test.sqlite
 ## 系統分析書進度
 
 - Word 主檔：`系統分析書_使用個案及活動圖範本.docx`。
-- Markdown 抽出版：`docs/system-analysis-extracted.md`。
+- Markdown 抽出版：已於 2026-10-16 移除。系統分析書的內容落後於程式（程式已有許多修改），專案規則是以實際程式與現行文件為準；Word 原檔仍在本機 `system-analysis/`（被 Git 忽略，不在版本庫）。
 - 已完成五大功能分類與描述性綱目。
 - 尚待更新 4.1.1 至 4.5.4 的使用個案描述表、使用個案圖與活動圖，並移除舊範本內容。
