@@ -66,6 +66,8 @@ const {
 const { createAuthToken, getBearerToken, safeEqual, verifyAuthToken } = require("./auth");
 const { verifyFirebaseIdToken } = require("./firebaseAuth");
 const { shouldBlockAdminSurface } = require("./adminSurfaceGuard");
+const { resolveClientAddress } = require("./clientAddress");
+const { isDevAuthModeEnabled, devAuthModeBlockedReason } = require("./devAuthMode");
 const {
   PaymentServiceError,
   cancelLinePayAuthorization,
@@ -2789,6 +2791,10 @@ const schedulerEnvironment = {
 loadDevConsoleState().then(() => {
 server.listen(port, () => {
   console.log(`DrinkGroupBuy backend listening on http://localhost:${port}`);
+  const devModeBlockedReason = devAuthModeBlockedReason();
+  if (devModeBlockedReason && readBooleanEnv(process.env.AUTH_DEV_MODE, false)) {
+    console.warn(`[dev-auth] AUTH_DEV_MODE is set but ignored: ${devModeBlockedReason}. Dev login stays off.`);
+  }
   linePayReconciliationScheduler = startLinePayReconciliationScheduler({
     enabled: controlledPostgresOrderRuntime && !reconciliationPostgresReady ? false : undefined,
     reliabilityJobRepository,
@@ -3035,14 +3041,10 @@ const ADMIN_LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
 const adminLoginAttemptsByIp = new Map();
 
 function getAdminLoginClientIp(request) {
-  // App Service sits behind Azure's front-end proxy, so the real client IP arrives via
-  // X-Forwarded-For (first entry is the original client); local dev has no proxy in front, so
-  // request.socket.remoteAddress is the right fallback there.
-  const forwardedFor = request.headers["x-forwarded-for"];
-  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
-    return forwardedFor.split(",")[0].trim();
-  }
-  return request.socket?.remoteAddress || "unknown";
+  // See clientAddress.js: behind Azure's front end only the LAST X-Forwarded-For entry is ours (the first is
+  // whatever the caller wrote, which would let every attempt look like a new client); everywhere else the header
+  // is ignored and the connection's own address is used.
+  return resolveClientAddress({ headers: request.headers, socketAddress: request.socket?.remoteAddress });
 }
 
 function getAdminLoginLockoutRemainingMs(request) {
@@ -4732,11 +4734,6 @@ function isSettlementRouteReadyForPostgres(method, pathname) {
     return true;
   }
   return false;
-}
-
-function isDevAuthModeEnabled() {
-  if (process.env.NODE_ENV === "production") return false;
-  return readBooleanEnv(process.env.AUTH_DEV_MODE, false);
 }
 
 function isLoopbackRequest(request) {

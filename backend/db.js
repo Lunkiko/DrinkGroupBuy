@@ -377,7 +377,6 @@ function listGroupBuyActivities() {
       return {
         id: row.id,
         storeId: row.store_id,
-        createdByUserId: row.created_by_user_id,
         title: row.title,
         status: displayStatus,
         rawStatus: row.status,

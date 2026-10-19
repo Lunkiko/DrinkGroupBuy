@@ -29,8 +29,8 @@ Invoke-RestMethod http://localhost:3000/health
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/auth/firebase-session` | Firebase ID token login and backend role resolution |
-| `GET` | `/api/auth/dev-users` | 本機 dev-only 身份清單，需 `AUTH_DEV_MODE=true` |
-| `POST` | `/api/auth/dev-session` | 本機 dev-only 模擬登入，需 `AUTH_DEV_MODE=true` |
+| `GET` | `/api/auth/dev-users` | 本機 dev-only 身份清單，需 `AUTH_DEV_MODE=true`；在 Azure App Service 或 `ADMIN_WEB_LOOPBACK_ONLY=true` 的主機上不論設定為何一律關閉（`devAuthMode.js`） |
+| `POST` | `/api/auth/dev-session` | 本機 dev-only 模擬登入，需 `AUTH_DEV_MODE=true`；關閉條件同上 |
 | `GET` | `/health` | 後端健康檢查 |
 | `GET` | `/api/group-buy-activities` | 讀取團購活動 |
 | `POST` | `/api/merchant/group-buy-activities` | 商家建立團購 |

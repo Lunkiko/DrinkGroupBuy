@@ -215,7 +215,7 @@ Set-EnvLine LINE_PAY_CANCEL_URL http://163.17.135.215:3000/api/payments/line-pay
 | --- | --- | --- |
 | `PORT` | `3000` | 與防火牆規則、`update-vm-server.ps1`、APK 網址一致 |
 | `AUTH_SESSION_SECRET` | 新產生的隨機字串（32 字元以上） | 用上面的 `New-RandomHex 32`（64 個十六進位字元）；**不要沿用 Azure 的值** |
-| `AUTH_DEV_MODE` | **`false`** | VM 有公開 IP，開發登入模式一定要關。`install-vm-service.ps1` 看到 `true` 會拒絕安裝 |
+| `AUTH_DEV_MODE` | **`false`** | VM 有公開 IP，開發登入模式一定要關。`install-vm-service.ps1` 看到 `true` 會拒絕安裝；就算之後誤改成 `true`，只要 `ADMIN_WEB_LOOPBACK_ONLY=true`，後端也不會啟用開發登入 |
 | `ADMIN_WEB_LOOPBACK_ONLY` | `true`（建議） | 管理後台只允許在 VM 本機開啟，見「安全」 |
 | `ADMIN_WEB_PASSWORDS` | 強密碼（可用逗號分隔多組） | 後台共用密碼；`.env.example` 沒列這項，說明見 `docs/azure-classroom-deployment.md` |
 | `FIREBASE_PROJECT_ID` | `drinkgroupbuy-mobile` | 與 App 同一個 Firebase 專案 |

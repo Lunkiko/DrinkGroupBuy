@@ -44,7 +44,6 @@ async function listPostgresGroupBuyActivities(database) {
       SELECT
         activity.id,
         activity.store_id,
-        activity.created_by_user_id,
         activity.title,
         activity.status,
         activity.start_at,
@@ -124,7 +123,6 @@ async function listPostgresGroupBuyActivities(database) {
     return {
       id: row.id,
       storeId: row.store_id,
-      createdByUserId: row.created_by_user_id,
       title: row.title,
       status: displayStatus,
       rawStatus: row.status,

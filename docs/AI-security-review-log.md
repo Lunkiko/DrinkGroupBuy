@@ -1589,3 +1589,72 @@
 **審查過程中更正的誤判**：我一度報告「取餐碼沒有唯一索引，可能核銷到別人的訂單」，這是錯的（我的搜尋漏掉了跨多行的索引定義）。實際有唯一索引，後果只是同時標記時後到的那次失敗，嚴重度已據此下修。另外我先前把「GitHub 建置結果 success」當成程式碼正常的證據，這也不成立：當時的流程不跑任何測試，success 只代表檔案上傳並部署成功。
 
 **這次沒審查到／沒驗證到的部分**：`test` 工作在 GitHub 上的第一次實際執行結果（本機以乾淨複本與 UTC 時區模擬過）、Azure 上標記可取餐修正後的實機結果、PostgreSQL 在 Azure 受管理連線池（PgBouncer）下 advisory lock 的行為（交易層級鎖在連線池的交易模式下依官方說明可用，但沒有在 Azure 實測）。
+
+---
+
+## 2026-10-19 — 整個程式庫資安掃描；修正管理員登入鎖定可被繞過、開發登入開關、公開團購列表的內部帳號編號
+
+**範圍**：整個 repository（406 個 Git 追蹤檔案與完整 Git 歷史、`backend/server.js` 的 63 個路由區塊逐一檢視、Azure 公開端點 9 次唯讀 GET 加 1 次帶無效憑證的登入請求）。修正涉及 `backend/server.js`（`getAdminLoginClientIp` 改為呼叫新模組、移除本地的 `isDevAuthModeEnabled`）、新增 `backend/clientAddress.js`、`backend/devAuthMode.js`（各附單元測試）、`backend/database/repositories/groupBuyActivityReadRepository.js`、`backend/db.js`。
+**觸發原因**：使用者在評估「是否要蒐集顧客年齡性別」時要求做整個程式庫掃描（`ai-generated-code-security-auditor` 角色）；使用者同意先修 #1、#2、#6。修正屬 auth 程式碼，依規則自己跑 `/security-review`，第一步交給一個不知道我結論的獨立 agent。
+**呼應**：(1) **2026-09-11（第三次追加）「刻意接受的限制 1」**——當時記錄「鎖定用 `X-Forwarded-For` 第一段，在 Azure 下可信」，這個結論**是錯的**，本次 #1 就是在更正它（見下方）。(2) 2026-10-09 低項「`adminSurfaceGuard.js` 若 VM 上另架本機反向代理守門失效」——本次 #3，確認仍存在、未動。
+
+### 發現
+
+| # | 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|---|--------|------|------|----------|------|
+| 1 | 高 | `server.js` `getAdminLoginClientIp`（修前約 3038 行） | 登入失敗鎖定用 `X-Forwarded-For` 的第一段當來源；那段是呼叫端自己寫的，每次換假值就永遠達不到 5 次鎖定，Azure 上公開的 `/admin/login` 可無限次猜密碼 | 只在 Azure（`WEBSITE_SITE_NAME`）信任標頭，且取 Azure 附加的最後一段並去掉連接埠；其他環境忽略標頭、用連線位址 | 已修（本機，尚未部署） |
+| 2 | 中 | `server.js` `isDevAuthModeEnabled` | `POST /api/auth/dev-session` 不需登入即可替任何使用者（含管理員）核發 token，唯一防護是 `AUTH_DEV_MODE` 與 `NODE_ENV=production`；環境變數誤設即整個系統可被冒用 | Azure（`WEBSITE_SITE_NAME`）與 `ADMIN_WEB_LOOPBACK_ONLY=true`（學校 VM）上無論設定為何一律關閉 | 已修（本機，尚未部署） |
+| 3 | 中（未來） | `adminSurfaceGuard.js` / `isLoopbackRequest` | VM 若為了 HTTPS 另架同機反向代理，所有請求都來自 127.0.0.1，「後台只限本機」會無聲失效 | 做 HTTPS 之前改成不依賴連線位址的做法 | 待處理（加反向代理之前） |
+| 4 | 低 | `README.md`、`database/README.md`、`scripts/start-dev.ps1` | 本機開發資料庫密碼（28 字元）寫在公開文件，且與目前 `backend/.env` 相同。這台電腦的 PostgreSQL 只監聽 127.0.0.1 與 ::1、防火牆沒開 5432，網路上連不進來 | 換掉本機密碼；確認 VM 與 Azure 的資料庫密碼與它不同 | 待處理（使用者操作） |
+| 5 | 低 | 所有 HTML 回應 | 沒有 `X-Frame-Options`、`X-Content-Type-Options`、CSP、HSTS、`Referrer-Policy`；Cookie 為 `SameSite=Lax`，實際可利用性低 | 加上安全標頭 | 待處理 |
+| 6 | 低 | `GET /api/group-buy-activities`（免登入） | 回傳每場團購的 `createdByUserId`（商家帳號內部編號）；手機端沒有任何地方使用它 | 公開列表不回傳該欄位 | 已修（Postgres 與 SQLite 兩條讀取路徑，本機，尚未部署） |
+| 7 | 資訊 | `verifyAdminWebPassword` | 密碼登入只對應到單一種子管理員身份，沒有個人稽核 | — | 已知 |
+| 8 | 資訊 | 公開端點 | 沒有速率限制（含商家申請） | — | 已知（已在 `PROGRESS.md`） |
+
+### 對 2026-09-11 舊結論的更正
+
+當時的理由是「Azure App Service 的前端閘道會如實附上真實來源 IP，所以可信」。**推理有缺口**：閘道是把真實 IP **附加**在 `X-Forwarded-For` 的後面，不會清掉呼叫端自己寫在前面的值，所以**第一段仍由呼叫端控制**，該處可信的是最後一段。當時也自己寫明「還沒有部署到 Azure 用真實 `X-Forwarded-For` 情境驗證」，這個缺口一直沒補。本次改為取最後一段。
+
+### 修正的驗證
+
+- 單元測試 12 項（`clientAddress.test.js` 7 項、`devAuthMode.test.js` 5 項），涵蓋偽造第一段、換不同假值結果相同、有／無連接埠、IPv6、非 Azure 忽略標頭、無標頭回退、Azure／VM／production／一般本機的開發模式開關。
+- **反向驗證**：暫時把 `entries[entries.length - 1]` 改回 `entries[0]`、並拿掉 `devAuthMode.js` 的兩個檢查，4 項測試如預期失敗，還原後 12 項全過。
+- #6：真實形狀比對（`group-buy-activity-read-repository-smoke.js`）修前預期含欄位，修後預期不含；暫時加回欄位時該 smoke 如預期失敗，還原後通過。真實 PostgreSQL 經 HTTP 的 `group-buy-activity-postgres-http-smoke.js` 在暫時 schema 通過。
+- `npm test` 285/285、`npm run check:sql-safety` 通過、`npm run test:db` 3/3 通過。
+- 獨立複查（agent 只拿到範圍與審查規則，沒有我的結論）：沒有中度以上的發現、沒有退步；逐一確認偽造標頭在 Azure、學校 VM、開發機三種環境的結果，以及新的開發模式開關只會比舊版更嚴。
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| 路由授權 | 63 個路由區塊中 17 個無登入檢查的逐一確認為合理（健康檢查、登入、LINE Pay 回呼、公開讀取、已關閉的開發端點）；退款僅管理員（`linePayService.js:1214`）、建立付款需訂單屬於本人（309）、重新付款需本人或管理員（518）、退款申請與核准的角色與店家檢查在服務層 |
+| 越權（IDOR） | 訂單 `canAccessOrder`、店家 `canManageStore` |
+| 身分對應 | 以 `firebase_uid` 對應、新帳號需 `email_verified`、信箱已被使用則拒絕，沒有「以他人信箱註冊冒用」的路徑 |
+| 停用帳號 | 登入與每次請求都查 `status = 'active'`，角色以資料庫為準，不信 token |
+| Token | HMAC-SHA256、`timingSafeEqual`、12 小時到期 |
+| 管理後台 | 寫入動作有 CSRF、Cookie `HttpOnly` |
+| XSS | LINE Pay 結果頁所有輸出都跳脫，返回網址以 `URL` 物件組成 |
+| SQL | 全部參數化、`check:sql-safety` 通過、沒有以字串拼接的查詢 |
+| 機密 | 406 個追蹤檔案無真實金鑰；Git 全歷史對私鑰、Google API key、連線字串、LINE Pay 密鑰、管理員密碼、session 密鑰的特徵為 0 次，從未提交過 `.env`、金鑰檔、備份檔 |
+| 手機端 | `EXPO_PUBLIC_*` 皆為設計上公開類型；正式版預設禁止明文 HTTP（僅 VM 版打開）；付款深層連結只觸發向後端同步，不信網址上的 `status` |
+| Azure 實測 | `dev-users`、`dev-session` 所在端點、`business-time`、`/dev-console` 皆回 404；**`NODE_ENV` 確為 production**（以無效憑證打 `firebase-session`，回應沒有 `debug` 欄位），所以管理員 Cookie 有 `Secure`、開發模式本來就被關 |
+
+### 這次沒審查到／沒驗證到的部分
+
+- **Azure 實際送出的 `X-Forwarded-For` 格式沒有驗證**：新程式假設最後一段是 Azure 附加的 `ip:port` 或 `[ipv6]:port`。若 Azure 送未加括號的 IPv6 加連接埠，鍵會包含變動的連接埠而削弱鎖定（獨立複查也提到，信心低）。要驗證得對正式站做連續失敗登入，等於攻擊自己的站，所以沒做；部署後可用自己的 IP 與測試密碼觀察鎖定是否在第 5 次生效。
+- #1、#2、#6 尚未部署，Azure 上的實際行為（特別是公開列表已不含該欄位）要部署後再測。
+- 依賴套件漏洞（需連網查）、Azure／Firebase／Google Cloud 後台設定（防火牆規則、金鑰限制、授權網域）、`ADMIN_WEB_PASSWORDS` 強度、備份檔是否加密、手機原生程式碼、金額計算與併發細節（前幾次審查有做，本次未重做）。
+- 掃描只對 Azure 公開網址做了 9 次 GET 與 1 次帶無效憑證的 POST，沒有嘗試登入或任何攻擊性操作。
+
+### 同日後續（`/code-review` medium 的 4 項建議，處理 3 項、略過 1 項）
+
+| 建議 | 處理 |
+|------|------|
+| IPv6 若沒加括號又帶連接埠，鎖定的鍵會包含變動的連接埠 | **已修**。IPv6 一律按 /64 網段計數（取前四組 16 位元）：連接埠只會落在最後一組，所以無論有無括號、有無連接埠都不影響鍵；同時修掉另一個本來就存在的弱點——IPv6 使用者通常擁有整段 /64，按完整位址計數的話換尾巴就能繞過 |
+| 開發模式被強制關閉時沒有任何提示 | **已修**。新增 `devAuthModeBlockedReason()`，開關與警告共用同一份判斷；後端啟動時若 `AUTH_DEV_MODE` 為真卻被擋下，會印出 `[dev-auth] AUTH_DEV_MODE is set but ignored: <原因>` |
+| 沒有測試涵蓋「請求標頭 → 鎖定」的整條串接 | **已補**。新增 `scripts/auth-hardening-http-smoke.js` 並加進 `npm run test:db`（CI 的 `test` 工作每次都會跑）：啟動真後端，驗證 Azure 型環境下每次偽造不同第一段仍在第 6 次回 429、非 Azure 環境忽略標頭、四種組合下開發登入端點的狀態與警告 |
+| `devAuthMode.js` 的布林解析與 `server.js` 的 `readBooleanEnv` 重複 | **略過**。目前兩邊行為一致，整理性質，不值得為此多動 `server.js` 的其他呼叫處 |
+
+**這次補測順便取得的實證**（修 #1 的證據）：把修正暫時改回舊行為（取第一段），對真後端送 7 次錯誤密碼、每次偽造不同的第一段，**7 次全部回 302、從不鎖定**——漏洞的實際重現；修正後為 `302 ×5, 429 ×2`。上一段「Azure 實際格式沒有驗證」的限制只剩下「Azure 送出的最後一段是否真的是 `ip:port`／`[ipv6]:port`」這一點，仍需部署後以自己的 IP 觀察。
+
+**驗證**：單元測試 14 項（`clientAddress` 8、`devAuthMode` 6，含 IPv6 /64 與被擋原因）；`npm test` 287/287；`check:sql-safety` 通過；`npm run test:db` 4/4（含新 smoke）。

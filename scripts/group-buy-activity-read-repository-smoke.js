@@ -105,7 +105,6 @@ async function verifyPostgresContract() {
   assert.deepEqual(await repository.listActivities(), [{
     id: "activity-pg-001",
     storeId: "store-001",
-    createdByUserId: "user-merchant-001",
     title: "PostgreSQL 團購",
     status: "confirmed",
     rawStatus: "recruiting",
