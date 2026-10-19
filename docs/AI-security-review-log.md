@@ -1602,12 +1602,12 @@
 
 | # | 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
 |---|--------|------|------|----------|------|
-| 1 | 高 | `server.js` `getAdminLoginClientIp`（修前約 3038 行） | 登入失敗鎖定用 `X-Forwarded-For` 的第一段當來源；那段是呼叫端自己寫的，每次換假值就永遠達不到 5 次鎖定，Azure 上公開的 `/admin/login` 可無限次猜密碼 | 只在 Azure（`WEBSITE_SITE_NAME`）信任標頭，且取 Azure 附加的最後一段並去掉連接埠；其他環境忽略標頭、用連線位址 | 已修（本機，尚未部署） |
-| 2 | 中 | `server.js` `isDevAuthModeEnabled` | `POST /api/auth/dev-session` 不需登入即可替任何使用者（含管理員）核發 token，唯一防護是 `AUTH_DEV_MODE` 與 `NODE_ENV=production`；環境變數誤設即整個系統可被冒用 | Azure（`WEBSITE_SITE_NAME`）與 `ADMIN_WEB_LOOPBACK_ONLY=true`（學校 VM）上無論設定為何一律關閉 | 已修（本機，尚未部署） |
+| 1 | 高 | `server.js` `getAdminLoginClientIp`（修前約 3038 行） | 登入失敗鎖定用 `X-Forwarded-For` 的第一段當來源；那段是呼叫端自己寫的，每次換假值就永遠達不到 5 次鎖定，Azure 上公開的 `/admin/login` 可無限次猜密碼 | 只在 Azure（`WEBSITE_SITE_NAME`）信任標頭，且取 Azure 附加的最後一段並去掉連接埠；其他環境忽略標頭、用連線位址 | 已修，已部署（b7e54f9）；Azure 上的鎖定實測待使用者操作 |
+| 2 | 中 | `server.js` `isDevAuthModeEnabled` | `POST /api/auth/dev-session` 不需登入即可替任何使用者（含管理員）核發 token，唯一防護是 `AUTH_DEV_MODE` 與 `NODE_ENV=production`；環境變數誤設即整個系統可被冒用 | Azure（`WEBSITE_SITE_NAME`）與 `ADMIN_WEB_LOOPBACK_ONLY=true`（學校 VM）上無論設定為何一律關閉 | 已修，已部署（b7e54f9）；Azure 實測 dev-users、business-time、/dev-console 仍為 404 |
 | 3 | 中（未來） | `adminSurfaceGuard.js` / `isLoopbackRequest` | VM 若為了 HTTPS 另架同機反向代理，所有請求都來自 127.0.0.1，「後台只限本機」會無聲失效 | 做 HTTPS 之前改成不依賴連線位址的做法 | 待處理（加反向代理之前） |
 | 4 | 低 | `README.md`、`database/README.md`、`scripts/start-dev.ps1` | 本機開發資料庫密碼（28 字元）寫在公開文件，且與目前 `backend/.env` 相同。這台電腦的 PostgreSQL 只監聽 127.0.0.1 與 ::1、防火牆沒開 5432，網路上連不進來 | 換掉本機密碼；確認 VM 與 Azure 的資料庫密碼與它不同 | 待處理（使用者操作） |
-| 5 | 低 | 所有 HTML 回應 | 沒有 `X-Frame-Options`、`X-Content-Type-Options`、CSP、HSTS、`Referrer-Policy`；Cookie 為 `SameSite=Lax`，實際可利用性低 | 加上安全標頭 | 待處理 |
-| 6 | 低 | `GET /api/group-buy-activities`（免登入） | 回傳每場團購的 `createdByUserId`（商家帳號內部編號）；手機端沒有任何地方使用它 | 公開列表不回傳該欄位 | 已修（Postgres 與 SQLite 兩條讀取路徑，本機，尚未部署） |
+| 5 | 低 | 所有 HTML 回應 | 沒有 `X-Frame-Options`、`X-Content-Type-Options`、CSP、HSTS、`Referrer-Policy`；Cookie 為 `SameSite=Lax`，實際可利用性低 | 加上安全標頭 | 已修（見下方「同日後續（#5 安全標頭）」，本機，尚未部署） |
+| 6 | 低 | `GET /api/group-buy-activities`（免登入） | 回傳每場團購的 `createdByUserId`（商家帳號內部編號）；手機端沒有任何地方使用它 | 公開列表不回傳該欄位 | 已修，已部署（b7e54f9）；Azure 實測 550 筆活動中 0 筆含該欄位 |
 | 7 | 資訊 | `verifyAdminWebPassword` | 密碼登入只對應到單一種子管理員身份，沒有個人稽核 | — | 已知 |
 | 8 | 資訊 | 公開端點 | 沒有速率限制（含商家申請） | — | 已知（已在 `PROGRESS.md`） |
 
@@ -1642,7 +1642,7 @@
 ### 這次沒審查到／沒驗證到的部分
 
 - **Azure 實際送出的 `X-Forwarded-For` 格式沒有驗證**：新程式假設最後一段是 Azure 附加的 `ip:port` 或 `[ipv6]:port`。若 Azure 送未加括號的 IPv6 加連接埠，鍵會包含變動的連接埠而削弱鎖定（獨立複查也提到，信心低）。要驗證得對正式站做連續失敗登入，等於攻擊自己的站，所以沒做；部署後可用自己的 IP 與測試密碼觀察鎖定是否在第 5 次生效。
-- #1、#2、#6 尚未部署，Azure 上的實際行為（特別是公開列表已不含該欄位）要部署後再測。
+- #1、#2、#6 已於 b7e54f9 部署：#6 已在 Azure 實測（550 筆活動、0 筆含 `createdByUserId`）、#2 的開發端點在 Azure 仍回 404；**#1 的 Azure 實測（連續輸錯 5 次看第 6 次是否被鎖）待使用者操作**，在那之前「Azure 送出的最後一段是否為 `ip:port`」仍是假設。
 - 依賴套件漏洞（需連網查）、Azure／Firebase／Google Cloud 後台設定（防火牆規則、金鑰限制、授權網域）、`ADMIN_WEB_PASSWORDS` 強度、備份檔是否加密、手機原生程式碼、金額計算與併發細節（前幾次審查有做，本次未重做）。
 - 掃描只對 Azure 公開網址做了 9 次 GET 與 1 次帶無效憑證的 POST，沒有嘗試登入或任何攻擊性操作。
 
@@ -1658,3 +1658,15 @@
 **這次補測順便取得的實證**（修 #1 的證據）：把修正暫時改回舊行為（取第一段），對真後端送 7 次錯誤密碼、每次偽造不同的第一段，**7 次全部回 302、從不鎖定**——漏洞的實際重現；修正後為 `302 ×5, 429 ×2`。上一段「Azure 實際格式沒有驗證」的限制只剩下「Azure 送出的最後一段是否真的是 `ip:port`／`[ipv6]:port`」這一點，仍需部署後以自己的 IP 觀察。
 
 **驗證**：單元測試 14 項（`clientAddress` 8、`devAuthMode` 6，含 IPv6 /64 與被擋原因）；`npm test` 287/287；`check:sql-safety` 通過；`npm run test:db` 4/4（含新 smoke）。
+
+### 同日後續（#5 安全標頭）
+
+| 項目 | 內容 |
+|------|------|
+| 狀態 | #5 **已修**（本機，尚未部署）。新增 `backend/securityHeaders.js`，在請求入口設一次，之後 20 多處直接 `writeHead` 的 302、錯誤、靜態檔都會合併而不是被蓋掉 |
+| 加了什麼 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`、`Content-Security-Policy: frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'`；`Strict-Transport-Security: max-age=15552000` **只在 Azure**（`WEBSITE_SITE_NAME`）送，不含 `includeSubDomains`／`preload`（`azurewebsites.net` 是共用網域），學校 VM 與本機是明文 HTTP，送了也不會被瀏覽器採用 |
+| **刻意沒做** | **沒有 `script-src`／`style-src`／`default-src`**：後台頁面、LINE Pay 結果頁都依賴內嵌 `<style>`、`<script>` 與 `onsubmit="..."` 內嵌事件處理，加限制會直接弄壞。把內嵌改成外部檔或 nonce 是另一件工作，這次的 CSP 只收「沒人用到、限制不花成本」的項目 |
+| 事前確認 | 沒有任何頁面被 iframe 嵌入、沒有 `<base>`、所有 `<form action>` 都是同源路徑（含帳號角色切換的 `/admin/accounts/<id>/role`）、開發控制台靜態檔的 `Content-Type` 正確（`nosniff` 才不會擋到） |
+| 驗證 | 單元測試 6 項；真後端 smoke 新增標頭檢查，涵蓋 JSON、HTML、302 轉址、404、OPTIONS 五種響應 × Azure 型／純 HTTP 型兩種環境，並確認 CORS 標頭與 `Content-Type` 仍在；**反向驗證**：暫時拿掉入口那一行，smoke 如預期在第一個響應失敗，還原後通過 |
+| 真瀏覽器驗證 | 用內建瀏覽器對暫時 schema 上的真後端實際操作：共用密碼登入（表單送出加 302）、後台首頁／帳號角色／退款審核／商家申請／數據統計／匯入菜單六個頁面載入且表單數量正確、登出（表單送出加轉址）；控制台沒有任何 CSP 違規或被擋下的訊息；從頁面內嵌入 iframe 確實被擋下；瀏覽器端看到的標頭與設計一致 |
+| 沒驗證到 | 部署到 Azure 後的實際回應標頭（含 HSTS）；LINE Pay 結果頁在真實付款流程中的行為（頁面沒有框架嵌入也沒有外部表單，預期不受影響，但沒有走完整付款流程）；Firebase 後台登入頁（需要真實 Firebase 設定，暫時環境沒有） |

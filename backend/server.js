@@ -67,6 +67,7 @@ const { createAuthToken, getBearerToken, safeEqual, verifyAuthToken } = require(
 const { verifyFirebaseIdToken } = require("./firebaseAuth");
 const { shouldBlockAdminSurface } = require("./adminSurfaceGuard");
 const { resolveClientAddress } = require("./clientAddress");
+const { applySecurityHeaders } = require("./securityHeaders");
 const { isDevAuthModeEnabled, devAuthModeBlockedReason } = require("./devAuthMode");
 const {
   PaymentServiceError,
@@ -560,6 +561,7 @@ if (reconciliationRepositoriesAnyPostgres && !reconciliationPostgresReady) {
 
 const server = http.createServer(async (request, response) => {
   try {
+    applySecurityHeaders(response);
     if (request.method === "OPTIONS") {
       sendJson(response, 204, null);
       return;

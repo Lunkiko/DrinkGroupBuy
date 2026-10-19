@@ -1,10 +1,12 @@
 "use strict";
 
 // Real backend, real HTTP, throwaway schema (run through scripts/with-temp-schema.js, as `npm run test:db` does).
-// Guards the two settings that decide whether the admin login and the developer backdoor can be abused:
+// Guards the settings that decide whether the admin login and the developer backdoor can be abused:
 //   1. the admin-login lockout must keep counting when every attempt carries a different FORGED first
 //      X-Forwarded-For entry (Azure appends its own entry last; the first one is whatever the caller wrote);
-//   2. AUTH_DEV_MODE=true must be ignored (with a warning) on Azure and on a host with ADMIN_WEB_LOOPBACK_ONLY=true.
+//   2. AUTH_DEV_MODE=true must be ignored (with a warning) on Azure and on a host with ADMIN_WEB_LOOPBACK_ONLY=true;
+//   3. every kind of response (JSON, HTML, redirect, 404, OPTIONS) carries the browser security headers, with HSTS
+//      only on Azure.
 // The unit tests cover the helpers; this covers the wiring from the request to the behaviour. The only password
 // ever sent is the throwaway one below.
 
@@ -95,10 +97,43 @@ async function verifyDevModeSwitch() {
   }
 }
 
+async function verifySecurityHeaders() {
+  const alwaysExpected = {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "same-origin",
+  };
+  const requests = [
+    { label: "JSON", path: "/health", init: {}, status: 200 },
+    { label: "HTML page", path: "/admin/login", init: {}, status: 200 },
+    { label: "302 redirect", path: "/admin", init: { redirect: "manual" }, status: 302 },
+    { label: "404", path: "/api/does-not-exist", init: {}, status: 404 },
+    { label: "OPTIONS 204", path: "/health", init: { method: "OPTIONS" }, status: 204 },
+  ];
+
+  for (const { env, hsts } of [{ env: { WEBSITE_SITE_NAME: "app" }, hsts: true }, { env: {}, hsts: false }]) {
+    await withBackend(env, async ({ base }) => {
+      for (const { label, path: requestPath, init, status } of requests) {
+        const response = await fetch(`${base}${requestPath}`, init);
+        const where = `${label} (${hsts ? "Azure-style" : "plain HTTP host"})`;
+        assert.equal(response.status, status, where);
+        for (const [name, value] of Object.entries(alwaysExpected)) assert.equal(response.headers.get(name), value, `${where}: ${name}`);
+        assert.match(response.headers.get("content-security-policy") || "", /frame-ancestors 'none'/, `${where}: CSP`);
+        assert.equal(Boolean(response.headers.get("strict-transport-security")), hsts, `${where}: HSTS`);
+      }
+      // Existing behaviour stays intact: the CORS headers the mobile app depends on are still there.
+      const json = await fetch(`${base}/health`);
+      assert.equal(json.headers.get("access-control-allow-origin"), "*");
+      assert.match(json.headers.get("content-type") || "", /application\/json/);
+    });
+  }
+}
+
 async function main() {
   await verifyLockout();
   await verifyDevModeSwitch();
-  console.log("Auth hardening HTTP proof passed: forged X-Forwarded-For cannot dodge the admin lockout, and the dev login stays off on Azure and the school VM.");
+  await verifySecurityHeaders();
+  console.log("Auth hardening HTTP proof passed: forged X-Forwarded-For cannot dodge the admin lockout, the dev login stays off on Azure and the school VM, and every kind of response carries the security headers.");
 }
 
 main().catch((error) => {
