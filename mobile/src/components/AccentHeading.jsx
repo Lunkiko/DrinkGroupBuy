@@ -21,14 +21,14 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   bar: {
     width: 5,
-    height: 24,
+    height: 20,
     borderRadius: 3,
     backgroundColor: colors.warm
   },
   title: {
     ...typeScale.sectionTitle,
-    fontSize: 20,
-    lineHeight: 28,
+    fontSize: 16,
+    lineHeight: 22,
     color: colors.text
   }
 });

@@ -10,7 +10,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { ProgressBar } from "../components/ProgressBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { WarmPill } from "../components/WarmPill";
-import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
+import { maxFontSizeMultiplier, spacing, typeScale } from "../theme/tokens";
 import { getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
 import { formatDealFactorLabelWithSpace, formatDiscountPercentAsDealFactor } from "../utils/discountPercentFormat";
 import { formatShortDateTime, formatShortTimeRange } from "../utils/shortDateTime";
@@ -117,7 +117,7 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
 
 function TierIcon() {
   const { colors } = useTheme();
-  return <Icon color={colors.accent} name="tag" size={26} />;
+  return <Icon color={colors.accent} name="tag" size={18} />;
 }
 
 function StoreCard({ groupBuyActivity, store }) {
@@ -127,7 +127,7 @@ function StoreCard({ groupBuyActivity, store }) {
   return (
     <View style={styles.storeCard}>
       <View style={styles.storeLogo}>
-        <Icon color={colors.accent} name="store" size={40} />
+        <Icon color={colors.accent} name="store" size={34} />
       </View>
       <View style={[styles.flex, styles.storeInfo]}>
         <View style={styles.storeTop}>
@@ -135,12 +135,12 @@ function StoreCard({ groupBuyActivity, store }) {
           {recruiting ? <WarmPill label="招募中" /> : <StatusBadge value={groupBuyActivity.status} />}
         </View>
         <View style={styles.iconLine}>
-          <Icon color={colors.textSecondary} filled name="pin" size={20} />
+          <Icon color={colors.textSecondary} filled name="pin" size={16} />
           <Text style={[styles.lineText, styles.flex]}>{store?.address || "地址未提供"}</Text>
         </View>
         {store?.phone ? (
           <View style={styles.iconLine}>
-            <Icon color={colors.textSecondary} name="phone" size={20} />
+            <Icon color={colors.textSecondary} name="phone" size={16} />
             <Text style={[styles.lineText, styles.flex]}>{store.phone}</Text>
           </View>
         ) : null}
@@ -169,7 +169,7 @@ function ProgressCard({ groupBuyActivity }) {
         <Text style={styles.progressTitle}>目前進度</Text>
         {isOpen && groupBuyActivity.remainingTimeText ? (
           <View style={styles.inline}>
-            <Icon color={colors.alert} name="clock" size={24} />
+            <Icon color={colors.alert} name="clock" size={21} />
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.remaining}>{groupBuyActivity.remainingTimeText}</Text>
           </View>
         ) : null}
@@ -204,20 +204,18 @@ function ProgressCard({ groupBuyActivity }) {
 
       <View style={styles.divider} />
       <View style={styles.scheduleRow}>
-        <View style={[styles.scheduleItem, styles.flex]}>
-          <Icon color={colors.textSecondary} name="calendar" size={26} />
-          <View style={styles.flex}>
-            <Text style={styles.scheduleLabel}>截止</Text>
-            <Text style={styles.scheduleText}>{deadlineText}</Text>
-          </View>
+        <View style={styles.scheduleItem}>
+          <Icon color={colors.textSecondary} name="calendar" size={20} />
+          <Text style={styles.scheduleText}>
+            <Text style={styles.scheduleLabel}>截止：</Text>{deadlineText}
+          </Text>
         </View>
         <View style={styles.scheduleDivider} />
         <View style={[styles.scheduleItem, styles.flex]}>
-          <Icon color={colors.textSecondary} name="bag" size={26} />
-          <View style={styles.flex}>
-            <Text style={styles.scheduleLabel}>取餐</Text>
-            <Text style={styles.scheduleText}>{pickupText}</Text>
-          </View>
+          <Icon color={colors.textSecondary} name="shopBag" size={20} />
+          <Text style={[styles.scheduleText, styles.flex]}>
+            <Text style={styles.scheduleLabel}>取餐：</Text>{pickupText}
+          </Text>
         </View>
       </View>
     </View>
@@ -240,7 +238,7 @@ function NoticesCard({ notices }) {
         style={styles.noticeHeader}
       >
         <Text style={styles.noticeTitle}>注意事項</Text>
-        <Icon color={colors.textSecondary} name={open ? "chevronUp" : "chevronDown"} size={24} />
+        <Icon color={colors.textSecondary} name={open ? "chevronUp" : "chevronDown"} size={16} />
       </Pressable>
       {open ? (
         <View style={styles.noticeBody}>
@@ -268,15 +266,15 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: "flex-start",
     gap: spacing.s16,
     padding: spacing.s16,
-    borderRadius: radii.md,
-    borderWidth: sizes.stroke,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
   },
   storeLogo: {
     width: 72,
     height: 72,
-    borderRadius: radii.md,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.recess
@@ -302,20 +300,18 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: spacing.s8
   },
   lineText: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   activityTitle: {
     ...typeScale.sectionTitle,
-    fontSize: 20,
-    lineHeight: 28,
     color: colors.text
   },
   progressCard: {
     gap: spacing.s12,
-    padding: spacing.s20,
-    borderRadius: radii.md,
-    borderWidth: sizes.stroke,
+    padding: spacing.s16,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
   },
@@ -327,27 +323,22 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   progressTitle: {
     ...typeScale.sectionTitle,
-    fontSize: 20,
-    lineHeight: 28,
     color: colors.text
   },
   remaining: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   bigCups: {
-    ...typeScale.pearlNumber,
-    fontSize: 44,
-    lineHeight: 52,
+    ...typeScale.amount,
     color: colors.text
   },
   bigCupsUnit: {
-    ...typeScale.body,
-    fontSize: 20,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   people: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   barRow: {
@@ -356,19 +347,20 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: spacing.s12
   },
   percent: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
+    fontSize: 13,
     minWidth: 40,
     textAlign: "right",
     color: colors.textSecondary
   },
   offer: {
     ...typeScale.body,
-    fontSize: 18,
-    lineHeight: 26,
     color: colors.text
   },
   offerStrong: {
-    ...typeScale.price,
+    ...typeScale.button,
+    fontSize: 15,
+    lineHeight: 23,
     color: colors.text
   },
   estimate: {
@@ -387,14 +379,15 @@ const makeStyles = (colors) => StyleSheet.create({
   scheduleItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.s8
+    gap: spacing.s12
   },
   scheduleLabel: {
-    ...typeScale.caption,
     color: colors.textSecondary
   },
   scheduleText: {
-    ...typeScale.bodyDense,
+    ...typeScale.caption,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.text
   },
   scheduleDivider: {
@@ -404,13 +397,13 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   tierCard: {
     paddingHorizontal: spacing.s16,
-    borderRadius: radii.md,
-    borderWidth: sizes.stroke,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
   },
   tierRow: {
-    minHeight: 56,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.s12
@@ -420,21 +413,22 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopColor: colors.lineRow
   },
   tierText: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.text
   },
   tierValue: {
-    ...typeScale.price,
+    ...typeScale.bodyDense,
+    fontWeight: "700",
     color: colors.accent
   },
   noticeCard: {
-    borderRadius: radii.md,
-    borderWidth: sizes.stroke,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
   },
   noticeHeader: {
-    minHeight: 56,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -442,6 +436,7 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   noticeTitle: {
     ...typeScale.sectionTitle,
+    flex: 1,
     color: colors.text
   },
   noticeBody: {

@@ -194,7 +194,7 @@ function ProgressCard({ groupBuyActivity, progress }) {
       <View style={styles.divider} />
       {isOpen && groupBuyActivity.remainingTimeText ? (
         <View style={styles.inline}>
-          <Icon color={colors.alert} name="clock" size={26} />
+          <Icon color={colors.alert} name="clock" size={21} />
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.remaining}>{groupBuyActivity.remainingTimeText}</Text>
         </View>
       ) : null}
@@ -254,7 +254,7 @@ function OrderSummaryCard({ groupBuyActivity, order }) {
       <View style={styles.divider} />
       <View style={styles.splitRow}>
         <View style={styles.inline}>
-          <Icon color={colors.textSecondary} name="calendar" size={26} />
+          <Icon color={colors.textSecondary} name="calendar" size={20} />
           <Text style={styles.rowLabel}>預計取餐時間</Text>
         </View>
         <Text style={styles.mutedLine}>{pickupText}</Text>

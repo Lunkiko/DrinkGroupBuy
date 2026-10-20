@@ -93,7 +93,7 @@ export function StoreMenuScreen({ navigation, route }) {
     >
       <View style={styles.storeCard}>
         <View style={styles.storeLogo}>
-          <Icon color={colors.accent} name="store" size={44} />
+          <Icon color={colors.accent} name="store" size={34} />
         </View>
         <View style={styles.storeInfo}>
           <View style={styles.storeTop}>
@@ -109,7 +109,7 @@ export function StoreMenuScreen({ navigation, route }) {
           </View>
           {store.phone ? (
             <View style={styles.iconLine}>
-              <Icon color={colors.textSecondary} name="phone" size={20} />
+              <Icon color={colors.textSecondary} name="phone" size={16} />
               <Text style={styles.meta}>{store.phone}</Text>
             </View>
           ) : null}

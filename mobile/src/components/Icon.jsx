@@ -8,7 +8,15 @@ const IMAGE_ICONS = {
   home: { outline: require("../../assets/icons/nav-home.png"), filled: require("../../assets/icons/nav-home-filled.png") },
   pin: { outline: require("../../assets/icons/nav-pin.png"), filled: require("../../assets/icons/nav-pin-filled.png") },
   orders: { outline: require("../../assets/icons/nav-orders.png") },
-  profile: { outline: require("../../assets/icons/nav-profile.png") }
+  profile: { outline: require("../../assets/icons/nav-profile.png") },
+  store: { outline: require("../../assets/icons/store.png") },
+  phone: { outline: require("../../assets/icons/phone.png") },
+  tag: { outline: require("../../assets/icons/tag.png") },
+  calendar: { outline: require("../../assets/icons/calendar.png") },
+  shopBag: { outline: require("../../assets/icons/shop-bag.png") },
+  clock: { outline: require("../../assets/icons/clock.png") },
+  chevronDown: { outline: require("../../assets/icons/chevron-down.png") },
+  chevronUp: { outline: require("../../assets/icons/chevron-down.png"), rotate: "180deg" }
 };
 
 // Line icons drawn from plain Views (no icon font or SVG package, so no native rebuild): the
@@ -31,7 +39,7 @@ export function Icon({ name, size = 24, color, filled = false, cutout }) {
         importantForAccessibility="no-hide-descendants"
         resizeMode="contain"
         source={filled && picture.filled ? picture.filled : picture.outline}
-        style={{ width: size, height: size, tintColor: tint }}
+        style={{ width: size, height: size, tintColor: tint, ...(picture.rotate ? { transform: [{ rotate: picture.rotate }] } : null) }}
       />
     );
   }
