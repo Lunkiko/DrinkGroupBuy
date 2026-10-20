@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { maxFontSizeMultiplier, sizes, spacing, typeScale } from "../theme/tokens";
-import { useThemedStyles } from "../theme/ThemeContext";
+import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
+import { useTheme, useThemedStyles } from "../theme/ThemeContext";
+import { Icon } from "./Icon";
 
 // Label for every tab a bottom-tab navigator can show (keyed by the TAB's own route name, e.g.
 // "HomeTab" -- not the screen name inside its nested stack, e.g. "nearby", which stays distinct on
@@ -8,11 +9,13 @@ import { useThemedStyles } from "../theme/ThemeContext";
 // tab" or "push this screen in whichever stack is currently active"). CustomerTabs and MerchantTabs
 // each register only their own tabs, so `state.routes` below never mixes customer and merchant items --
 // no role filtering needed here any more.
+// The customer tabs carry a line icon (2026-10 designer blueprint); the merchant tabs have no icon design
+// yet and keep the dot.
 const TAB_INFO = {
-  HomeTab: { label: "首頁" },
-  LiveMapTab: { label: "即時地圖" },
-  OrdersTab: { label: "我的訂單" },
-  ProfileTab: { label: "個人中心" },
+  HomeTab: { label: "首頁", icon: "home" },
+  LiveMapTab: { label: "即時地圖", icon: "pin" },
+  OrdersTab: { label: "我的訂單", icon: "orders" },
+  ProfileTab: { label: "個人中心", icon: "profile" },
   MerchantDashboardTab: { label: "首頁" },
   MerchantCreateTab: { label: "開團" },
   MerchantMenuTab: { label: "菜單" },
@@ -21,9 +24,10 @@ const TAB_INFO = {
 
 // react-navigation's own tabBar prop shape ({ state, descriptors, navigation }); passed as
 // tabBar={(props) => <BottomNav {...props} />} to CustomerTabs' / MerchantTabs' Tab.Navigator.
-// Each tab is a dot and a label (docs/ui-style-guide.md).
+// A tab with an icon sits in a soft pill while selected; a tab without one is a dot and a label.
 export function BottomNav({ state, navigation }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   // Emitting tabPress lets the tab's own native-stack pop back to its root when the already-active tab
   // is tapped again (native-stack listens for it); tapping a different tab just switches to it and
@@ -46,10 +50,27 @@ export function BottomNav({ state, navigation }) {
             onPress={() => handleTabPress(route, active)}
             style={styles.item}
           >
-            <View style={[styles.dot, active && styles.dotActive]} />
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, active && styles.labelActive]}>
-              {info.label}
-            </Text>
+            {info.icon ? (
+              <View style={[styles.pill, active && styles.pillActive]}>
+                <Icon
+                  color={active ? colors.accent : colors.textSecondary}
+                  cutout={colors.recess}
+                  filled={active && info.icon === "home"}
+                  name={info.icon}
+                  size={26}
+                />
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, active && styles.labelActive]}>
+                  {info.label}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={[styles.dot, active && styles.dotActive]} />
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, active && styles.labelActive]}>
+                  {info.label}
+                </Text>
+              </>
+            )}
           </Pressable>
         );
       })}
@@ -71,6 +92,17 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.s4
+  },
+  pill: {
+    alignSelf: "stretch",
+    marginHorizontal: spacing.s8,
+    alignItems: "center",
+    gap: spacing.s4,
+    paddingVertical: spacing.s8,
+    borderRadius: radii.lg
+  },
+  pillActive: {
+    backgroundColor: colors.recess
   },
   dot: {
     width: 12,

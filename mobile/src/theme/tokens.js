@@ -14,7 +14,14 @@ export const colors = {
   onDark: "#EAF4FF", // text on the panel filled with `text` (the pickup code)
   lineDecor: "#BFDBFE", // decorative card outline on customer screens ("light blue"); carries no meaning
   lineRow: "#D6E2F3", // 1px divider between list rows; carries no meaning
-  lineInput: "#6F86B0" // outline of an unselected input (must reach 3:1 on `page`)
+  lineInput: "#6F86B0", // outline of an unselected input (must reach 3:1 on `page`)
+  // 2026-10-20 designer blueprint (UI 藍圖): a warm orange for "recruiting" and discount callouts, an amber
+  // progress bar with a pale track, and a red for the countdown clock. These deliberately sit outside the
+  // earlier "no orange in the app" rule (docs/ui-style-guide.md); the blueprint wins.
+  warm: "#EE5F0B",
+  progressFill: "#FBBF24",
+  progressTrack: "#FEF3C7",
+  alert: "#DC2626"
 };
 
 // Status pill colours. Meaning is never carried by colour alone: every tone also has a `mark`
@@ -43,7 +50,11 @@ export const darkColors = {
   onDark: "#172554",
   lineDecor: "#1E3F7A",
   lineRow: "#1E2C47",
-  lineInput: "#6F86AD"
+  lineInput: "#6F86AD",
+  warm: "#FB923C",
+  progressFill: "#FBBF24",
+  progressTrack: "#3A2F0E",
+  alert: "#F87171"
 };
 
 export const darkTones = {

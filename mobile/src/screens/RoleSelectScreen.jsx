@@ -549,8 +549,8 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     height: 246
   },
   logo: {
-    width: 200,
-    height: 254
+    width: 248,
+    height: 315
   },
   actionStack: {
     gap: 10
@@ -561,8 +561,8 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: 16,
+    borderWidth: 2,
     borderColor: colors.accent,
     backgroundColor: colors.page,
     paddingHorizontal: 18
@@ -586,8 +586,10 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     left: 14,
     fontSize: 17
   },
+  // Google's own blue for the "G" (the blueprint shows the colour logo; there is no image asset yet).
   googleIcon: {
-    color: colors.accentInk
+    color: "#4285F4",
+    fontSize: 24
   },
   loginButtonLabel: {
     color: colors.text,
@@ -668,7 +670,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   },
   textButtonLabel: {
     color: colors.accentInk,
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "900"
   },
   errorText: {
