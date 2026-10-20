@@ -1,8 +1,18 @@
-import { View } from "react-native";
+import { Image, View } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 
-// Line icons drawn from plain Views (no icon font or SVG package, so no native rebuild): the blueprint's
-// bottom-nav icons, the clock / check / chevrons, and the two empty-state pictures. Everything is laid out
+// The bottom-nav icons are the designer's own artwork: shape-only PNGs (black with an alpha channel) cut
+// out of the blueprint and recoloured with `tintColor`, so one file serves light, dark, selected and not.
+// Only home and the map pin have a solid version in the blueprint.
+const IMAGE_ICONS = {
+  home: { outline: require("../../assets/icons/nav-home.png"), filled: require("../../assets/icons/nav-home-filled.png") },
+  pin: { outline: require("../../assets/icons/nav-pin.png"), filled: require("../../assets/icons/nav-pin-filled.png") },
+  orders: { outline: require("../../assets/icons/nav-orders.png") },
+  profile: { outline: require("../../assets/icons/nav-profile.png") }
+};
+
+// Line icons drawn from plain Views (no icon font or SVG package, so no native rebuild): the
+// clock / check / chevrons, the detail-page glyphs, and the two empty-state pictures. Everything is laid out
 // on a 24-unit grid scaled to `size`. `filled` gives the solid version (used by the selected home tab);
 // `cutout` is the colour of whatever the icon sits on, used for the holes of a filled glyph.
 export function Icon({ name, size = 24, color, filled = false, cutout }) {
@@ -11,7 +21,20 @@ export function Icon({ name, size = 24, color, filled = false, cutout }) {
   const hole = cutout ?? colors.page;
   const u = size / 24;
   const stroke = Math.max(1.5, 2 * u);
+  const picture = IMAGE_ICONS[name];
   const glyph = GLYPHS[name];
+
+  if (picture) {
+    return (
+      <Image
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        resizeMode="contain"
+        source={filled && picture.filled ? picture.filled : picture.outline}
+        style={{ width: size, height: size, tintColor: tint }}
+      />
+    );
+  }
 
   return (
     <View importantForAccessibility="no-hide-descendants" style={{ width: size, height: size }}>
@@ -280,11 +303,13 @@ const GLYPHS = {
     </>
   ),
 
+  // Proportions measured off the blueprint's countdown clock: the ring fills the whole icon box and the
+  // single hand is a thick "L" (up from the centre, then right), as thick as the ring.
   clock: ({ u, tint, stroke }) => (
     <>
-      <View style={at(u, 3, 3, 18, 18, { borderWidth: stroke, borderColor: tint, borderRadius: 9 * u })} />
-      <View style={at(u, 11.2, 6.5, stroke / u, 6, { backgroundColor: tint, borderRadius: u })} />
-      <View style={at(u, 11.2, 11.7, 4.5, stroke / u, { backgroundColor: tint, borderRadius: u })} />
+      <View style={at(u, 0, 0, 24, 24, { borderWidth: stroke, borderColor: tint, borderRadius: 12 * u })} />
+      <View style={at(u, 10.8, 6.3, 2.4, 8.5, { backgroundColor: tint })} />
+      <View style={at(u, 10.8, 12.4, 6.9, 2.4, { backgroundColor: tint })} />
     </>
   ),
 

@@ -12,7 +12,7 @@ export const colors = {
   accentInk: "#1D4ED8", // links and the text of selected labels
   onAccent: "#FFFFFF", // text on an accent fill
   onDark: "#EAF4FF", // text on the panel filled with `text` (the pickup code)
-  lineDecor: "#BFDBFE", // decorative card outline on customer screens ("light blue"); carries no meaning
+  lineDecor: "#D1E4FA", // decorative card outline on customer screens ("light blue", matched to the blueprint); carries no meaning
   lineRow: "#D6E2F3", // 1px divider between list rows; carries no meaning
   lineInput: "#6F86B0", // outline of an unselected input (must reach 3:1 on `page`)
   // 2026-10-20 designer blueprint (UI 藍圖): a warm orange for "recruiting" and discount callouts, an amber

@@ -55,7 +55,7 @@ export function BottomNav({ state, navigation }) {
                 <Icon
                   color={active ? colors.accent : colors.textSecondary}
                   cutout={colors.recess}
-                  filled={active && info.icon === "home"}
+                  filled={active}
                   name={info.icon}
                   size={26}
                 />

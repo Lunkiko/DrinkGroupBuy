@@ -245,13 +245,13 @@ function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
         <Text numberOfLines={1} style={[styles.storeName, styles.flex]}>{storeName}</Text>
         {isOpen && groupBuyActivity.remainingTimeText ? (
           <View style={styles.inline}>
-            <Icon color={colors.alert} name="clock" size={22} />
+            <Icon color={colors.alert} name="clock" size={20} />
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.countdownText}>{groupBuyActivity.remainingTimeText}</Text>
           </View>
         ) : null}
         {!isOpen ? (
           <View style={styles.inline}>
-            <Icon color={colors.textSecondary} name="clock" size={22} />
+            <Icon color={colors.textSecondary} name="clock" size={20} />
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.closedText}>已截止</Text>
           </View>
         ) : null}
@@ -263,7 +263,7 @@ function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.recruitingText}>{statusLabel}</Text>
         ) : (
           <View style={styles.inline}>
-            {pickupReady || (isOpen && !isRecruiting) ? <Icon color={colors.accent} name="check" size={22} /> : null}
+            {pickupReady || (isOpen && !isRecruiting) ? <Icon color={colors.accent} name="check" size={20} /> : null}
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.stateText}>{statusLabel}</Text>
           </View>
         )}
@@ -285,7 +285,7 @@ function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
       <ProgressBar percent={progress.progressPercent} />
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
 
-      <PrimaryButton label="查看團購" onPress={onOpen} />
+      <PrimaryButton label="查看團購" onPress={onOpen} style={styles.cardButton} />
     </View>
   );
 }
@@ -376,13 +376,19 @@ const makeStyles = (colors) => StyleSheet.create({
     ...typeScale.button,
     color: colors.accentInk
   },
+  // The blueprint's home cards are thin-outlined (1px) with a small corner radius and a square-ish button,
+  // measured off the designer's images (border ~1dp, radius ~12-16dp, padding 16, button 48 high).
   card: {
     gap: spacing.s12,
-    padding: spacing.s20,
-    borderRadius: radii.lg,
-    borderWidth: sizes.stroke,
+    padding: spacing.s16,
+    borderRadius: radii.sm,
+    borderWidth: 1,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
+  },
+  cardButton: {
+    minHeight: 46,
+    borderRadius: 12
   },
   cardRow: {
     flexDirection: "row",
@@ -395,16 +401,18 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: "center",
     gap: spacing.s8
   },
+  // Font sizes below follow the blueprint card's measured text heights (store/countdown/status/discount
+  // text is smaller than the title and the cup count).
   storeName: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   countdownText: {
-    ...typeScale.button,
-    color: colors.text
+    ...typeScale.bodyDense,
+    color: colors.textSecondary
   },
   closedText: {
-    ...typeScale.button,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   activityTitle: {
@@ -415,20 +423,29 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   recruitingText: {
     ...typeScale.price,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "500",
     color: colors.warm
   },
   stateText: {
     ...typeScale.price,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "500",
     color: colors.accent
   },
   cupCount: {
     ...typeScale.body,
-    fontSize: 20,
-    lineHeight: 28,
+    fontSize: 19,
+    lineHeight: 27,
     color: colors.textSecondary
   },
   discountText: {
     ...typeScale.price,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "500",
     color: colors.warm
   },
   noDiscountText: {
@@ -436,7 +453,7 @@ const makeStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary
   },
   hint: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   pressed: {
@@ -494,8 +511,8 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: spacing.s12,
     paddingVertical: spacing.s24,
     paddingHorizontal: spacing.s20,
-    borderRadius: radii.lg,
-    borderWidth: sizes.stroke,
+    borderRadius: radii.sm,
+    borderWidth: 1,
     borderColor: colors.lineDecor,
     backgroundColor: colors.page
   },

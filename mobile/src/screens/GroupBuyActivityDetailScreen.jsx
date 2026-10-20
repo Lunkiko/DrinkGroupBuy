@@ -135,7 +135,7 @@ function StoreCard({ groupBuyActivity, store }) {
           {recruiting ? <WarmPill label="招募中" /> : <StatusBadge value={groupBuyActivity.status} />}
         </View>
         <View style={styles.iconLine}>
-          <Icon color={colors.textSecondary} name="pin" size={20} />
+          <Icon color={colors.textSecondary} filled name="pin" size={20} />
           <Text style={[styles.lineText, styles.flex]}>{store?.address || "地址未提供"}</Text>
         </View>
         {store?.phone ? (

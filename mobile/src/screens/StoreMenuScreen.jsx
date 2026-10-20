@@ -104,7 +104,7 @@ export function StoreMenuScreen({ navigation, route }) {
             />
           </View>
           <View style={styles.iconLine}>
-            <Icon color={colors.textSecondary} name="pin" size={20} />
+            <Icon color={colors.textSecondary} filled name="pin" size={20} />
             <Text style={styles.meta}>{store.address}</Text>
           </View>
           {store.phone ? (
