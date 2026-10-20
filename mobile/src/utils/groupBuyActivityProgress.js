@@ -173,3 +173,12 @@ function normalizeNullableNonNegativeInteger(value) {
   const normalized = Number(value);
   return Number.isInteger(normalized) && normalized >= 0 ? normalized : null;
 }
+
+export function findTierByCups(groupBuyActivity, cups) {
+  return (groupBuyActivity?.tiers ?? []).find((tier) => Number(tier.cups ?? tier.targetCups) === Number(cups)) ?? null;
+}
+
+// "已成團" (confirmed) still takes orders until the deadline, so "open" is not just status === recruiting.
+export function isGroupBuyActivityOpen(groupBuyActivity) {
+  return ["recruiting", "confirmed"].includes(groupBuyActivity?.status) && groupBuyActivity?.canJoin !== false;
+}

@@ -7,11 +7,11 @@ import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { QuantityStepper } from "../components/QuantityStepper";
-import { maxFontSizeMultiplier, sizes, spacing, typeScale } from "../theme/tokens";
+import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency, getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
 import { isDeadlineReached } from "../utils/deadlineTime";
 import { isDemoMode } from "../utils/demoMode";
-import { getGroupBuyActivityCapacityInfo } from "../utils/groupBuyActivityProgress";
+import { getGroupBuyActivityCapacityInfo, getOrderDiscountEstimate } from "../utils/groupBuyActivityProgress";
 import { formatOrderItemCustomizations } from "../utils/orderItems";
 import { goToCustomerHome } from "../navigation/goToCustomerHome";
 import { useThemedStyles } from "../theme/ThemeContext";
@@ -41,6 +41,11 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
   ));
   const totalQuantity = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalAmount = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
+  // What the cart would cost at the tier the activity has reached right now. Only an estimate: the final
+  // discount is settled at the deadline, and the LINE Pay pre-authorization is for the original amount.
+  const discountEstimate = cartItems.length > 0
+    ? getOrderDiscountEstimate(groupBuyActivity, { originalAmount: totalAmount })
+    : null;
   const groupBuyActivityClosed = groupBuyActivity.canJoin === false || isDeadlineReached(groupBuyActivity);
   const existingOrder = appState.orders.find((order) => (
     order.customerId === selectedCustomerId
@@ -153,11 +158,25 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
       </Section>
 
       <Section title="訂單金額">
-        <Card compact tone="recess" style={styles.totalCard}>
+        <View style={styles.totalCard}>
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>原價合計</Text>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.totalAmount}>{formatCurrency(totalAmount)}</Text>
+            <Text style={styles.totalLabel}>小計</Text>
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.totalAmount}>{formatYuan(totalAmount)}</Text>
           </View>
+          {discountEstimate && discountEstimate.discountAmount > 0 ? (
+            <>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>預估折扣金額</Text>
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.discountAmount}>{formatYuan(discountEstimate.discountAmount)}</Text>
+              </View>
+              <View style={styles.totalDivider} />
+              <View style={styles.totalRow}>
+                <Text style={styles.payableLabel}>預估應付金額</Text>
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.payableAmount}>{formatYuan(discountEstimate.finalAmount)}</Text>
+              </View>
+              <Text style={styles.totalNote}>實際預授權金額為原價，截止達標後才依折扣後金額請款。</Text>
+            </>
+          ) : null}
           {canUpdatePendingOrder || blocksOrderUpdate ? (
             <Text style={styles.totalNote}>
               {canUpdatePendingOrder
@@ -167,7 +186,7 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
                   : "此團購已有一筆已請款或已鎖定的訂單，請先回到訂單頁查看。"}
             </Text>
           ) : null}
-        </Card>
+        </View>
         <CheckRow checked={acceptOriginalPrice} onToggle={() => setAcceptOriginalPrice((value) => !value)}>
           <View style={styles.checkboxTextGroup}>
             <Text style={styles.checkboxTitle}>若無優惠接受原價購買</Text>
@@ -236,6 +255,11 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
   );
 }
 
+// The blueprint shows the amount panel in dollars-and-"元" ("300 元"), unlike the "$300" of the item cards.
+function formatYuan(amount) {
+  return `${amount} 元`;
+}
+
 const makeStyles = (colors, tones) => StyleSheet.create({
   itemCard: {
     gap: spacing.s12
@@ -251,11 +275,15 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     gap: spacing.s4
   },
   itemName: {
-    ...typeScale.button,
+    ...typeScale.price,
+    fontSize: 20,
+    lineHeight: 28,
     color: colors.text
   },
   itemAmount: {
     ...typeScale.price,
+    fontSize: 20,
+    lineHeight: 28,
     color: colors.text
   },
   meta: {
@@ -283,7 +311,31 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     color: tones.danger.fg
   },
   totalCard: {
-    gap: spacing.s8
+    gap: spacing.s12,
+    padding: spacing.s20,
+    borderRadius: radii.lg,
+    backgroundColor: colors.recess
+  },
+  totalDivider: {
+    height: 1,
+    backgroundColor: colors.lineDecor
+  },
+  discountAmount: {
+    ...typeScale.price,
+    color: colors.warm
+  },
+  payableLabel: {
+    ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
+    flex: 1,
+    color: colors.text
+  },
+  payableAmount: {
+    ...typeScale.amount,
+    fontSize: 32,
+    lineHeight: 38,
+    color: colors.accent
   },
   totalRow: {
     flexDirection: "row",

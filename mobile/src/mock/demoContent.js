@@ -138,6 +138,14 @@ export const demoMenu = {
   ]
 };
 
+// The real menu API puts optionType on every option as well as on its group, and the cart reads the size,
+// sweetness and ice labels from the option -- without this the demo cart and orders show empty spec lines.
+for (const menuItem of demoMenu.menuItems) {
+  for (const group of menuItem.customizationGroups) {
+    group.options = group.options.map((option) => ({ ...option, optionType: group.optionType }));
+  }
+}
+
 // selectRole's userId param -- reuses the app's existing default prototype customer id
 // (AppStateProvider's selectedCustomerId initial state / logout() reset) instead of inventing a new
 // one, so demo mode doesn't need its own bucket in the cart/order local-storage keying.

@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Card } from "../components/Card";
+import { AccentHeading } from "../components/AccentHeading";
+import { CategoryChips } from "../components/CategoryChips";
 import { ChoiceChip } from "../components/ChoiceChip";
+import { DrinkRow } from "../components/DrinkRow";
 import { EmptyPanel } from "../components/EmptyPanel";
+import { Icon } from "../components/Icon";
+import { InfoBanner } from "../components/InfoBanner";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -10,8 +14,9 @@ import { QuantityStepper } from "../components/QuantityStepper";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { getStoreMenu } from "../utils/apiClient";
 import { formatCurrency, getGroupBuyActivityById } from "../utils/calculations";
+import { getCategoryLabel } from "../utils/menuCategory";
 import { goToCustomerHome } from "../navigation/goToCustomerHome";
-import { useThemedStyles } from "../theme/ThemeContext";
+import { useTheme, useThemedStyles } from "../theme/ThemeContext";
 
 export function DrinkSelectionScreen({ navigation, route, appState, actions, selectedCustomerId }) {
   const groupBuyActivity = getGroupBuyActivityById(appState.groupBuyActivities, route.params?.groupBuyActivityId);
@@ -86,8 +91,12 @@ export function DrinkSelectionScreen({ navigation, route, appState, actions, sel
   );
 }
 
+// One screen with two views, matching the blueprint's two pictures: the menu list, and (after tapping a drink)
+// the customising view whose back arrow returns to the list. Editing an existing order's item opens straight
+// on the customising view and its back arrow leaves the screen.
 function DrinkMenuContent({ navigation, route, appState, actions, selectedCustomerId, groupBuyActivity, menu }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const store = menu.store;
   const storeDrinks = menu.menuItems;
 
@@ -113,166 +122,160 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
   const unitPrice = drink.basePrice + selectedOptions.reduce((sum, option) => sum + option.priceDelta, 0);
   const subtotal = unitPrice * quantity;
   const categories = [{ id: "recommended", label: "全部" }, ...[...new Set(storeDrinks.map((item) => item.category))]
-    .map((categoryId) => ({ id: categoryId, label: categoryId }))];
+    .map((categoryId) => ({ id: categoryId, label: getCategoryLabel(categoryId) }))];
   const [category, setCategory] = useState("recommended");
   const filteredDrinks = category === "recommended"
     ? storeDrinks
     : storeDrinks.filter((item) => item.category === category);
 
+  const addToCart = () => {
+    const orderItem = buildCartItem({
+      drink,
+      store,
+      groupBuyActivity,
+      quantity,
+      unitPrice,
+      subtotal,
+      selectedOptions,
+      selectedOptionIds
+    });
+    if (editOrderItem) {
+      // route.params must stay JSON-serializable, so the caller (CustomerOrdersScreen)
+      // passes editOrderId instead of a save callback; the merge-and-replace logic that
+      // used to live in that callback happens here instead, against the order's current
+      // items looked up fresh from appState.
+      const updatedItem = { ...editOrderItem, ...orderItem };
+      const nextItems = (editOrder?.items ?? []).map((current) => (
+        current.id === updatedItem.id ? updatedItem : current
+      ));
+      actions.updateOrderItems(editOrderId, nextItems);
+      setSubmitted(true);
+      navigation.goBack();
+      return;
+    }
+    if (editOrderId) {
+      actions.addToCart({
+        ...orderItem,
+        targetOrderId: editOrderId,
+      });
+    } else {
+      actions.addToCart({
+        ...orderItem
+      });
+    }
+    // Stay on the customising view (the blueprint shows the "已加入購物車" banner there) and reset the count.
+    setSubmitted(true);
+    setQuantity(1);
+  };
+
+  const title = customizing
+    ? (editOrderItem ? "修改飲料" : "客製化飲品")
+    : (store?.name ?? "選擇飲料");
+
   return (
     <View style={styles.screenWrap}>
       <MobileScreen
-        title={editOrderItem ? "修改飲料" : "選擇飲料"}
-        subtitle={`${store?.name} · ${groupBuyActivity.title}`}
-        onBack={() => navigation.goBack()}
+        title={title}
+        onBack={customizing && !editOrderItem ? () => setCustomizing(false) : () => navigation.goBack()}
       >
-      <View style={styles.menuHeader}>
-        <View style={styles.menuHero}>
-          <Text style={styles.shopName}>{store?.name}</Text>
-          <Text style={styles.groupBuyActivityName}>{groupBuyActivity.title}</Text>
-        </View>
+        {customizing ? (
+          <>
+            <View style={styles.hero}>
+              <View style={styles.heroPhoto}>
+                <Icon color={colors.textSecondary} name="image" size={48} />
+              </View>
+              <View style={styles.heroText}>
+                <Text style={styles.heroName}>{drink.name}</Text>
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.heroPrice}>{formatCurrency(drink.basePrice)}</Text>
+                {drink.description ? <Text style={styles.heroDescription}>{drink.description}</Text> : null}
+              </View>
+            </View>
+            <View style={styles.divider} />
 
-        <View style={styles.categoryRow}>
-          {categories.map((item) => (
-            <ChoiceChip
-              key={item.id}
-              label={item.label}
-              onPress={() => setCategory(item.id)}
-              selected={category === item.id}
-            />
-          ))}
-        </View>
-      </View>
-
-      <Section title={customizing ? "已選飲料" : "人氣推薦"}>
-        {filteredDrinks.length ? filteredDrinks.map((item) => (
-          <Card
-            compact
-            accessibilityState={{ selected: customizing && drinkId === item.id }}
-            key={item.id}
-            onPress={() => {
-              setDrinkId(item.id);
-              setSelectedOptionIds(buildInitialSelections(item, null));
-              setCustomizing(true);
-            }}
-            style={[
-              styles.menuItem,
-              customizing && drinkId === item.id && styles.activeMenuItem,
-              customizing && drinkId !== item.id && styles.hiddenItem
-            ]}
-          >
-            <View style={styles.menuTextGroup}>
-              <View style={styles.nameRow}>
-                <Text style={styles.menuItemName}>{item.name}</Text>
-                {item.id === storeDrinks[0]?.id ? (
-                  <View style={styles.hotTag}>
-                    <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.hotTagText}>推</Text>
+            {sortGroupsForDisplay(drink.customizationGroups).map((group) => (
+              <View key={group.optionType} style={styles.group}>
+                <Text accessibilityRole="header" style={styles.groupTitle}>{getGroupTitle(group.optionType)}</Text>
+                {group.options.length === 0 || group.maxSelections === 0 ? (
+                  <EmptyPanel>{`此飲品不提供${getGroupTitle(group.optionType)}選項。`}</EmptyPanel>
+                ) : (
+                  <View style={styles.optionWrap}>
+                    {group.options.map((option) => (
+                      <OptionButton
+                        key={option.id}
+                        active={selectedOptionIds.includes(option.id)}
+                        label={`${option.label}${option.priceDelta ? ` +${formatCurrency(option.priceDelta)}` : ""}`}
+                        onPress={() => setSelectedOptionIds((current) => toggleOption(current, option.id, group))}
+                      />
+                    ))}
                   </View>
+                )}
+                {group.optionType === "topping" && group.maxSelections > 0 ? (
+                  <Text style={styles.meta}>最多可選 {group.maxSelections} 種加料。</Text>
                 ) : null}
               </View>
-              <Text style={styles.menuDescription}>{item.description}</Text>
+            ))}
+
+            <View style={styles.group}>
+              <Text accessibilityRole="header" style={styles.groupTitle}>數量</Text>
+              <QuantityStepper
+                decreaseLabel="減少一杯"
+                increaseLabel="增加一杯"
+                onDecrease={() => setQuantity((value) => Math.max(1, value - 1))}
+                onIncrease={() => setQuantity((value) => value + 1)}
+                value={quantity}
+              />
             </View>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.menuPrice}>{formatCurrency(item.basePrice)}</Text>
-          </Card>
-        )) : (
-          <EmptyPanel>此分類目前沒有品項。</EmptyPanel>
-        )}
-        {customizing ? (
-          <PrimaryButton label="重新選擇飲料" variant="secondary" onPress={() => setCustomizing(false)} />
-        ) : null}
-      </Section>
 
-      {customizing ? (
-        <>
-          {drink.customizationGroups.map((group) => (
-            <Section key={group.optionType} title={getGroupTitle(group.optionType)}>
-              {group.options.length === 0 || group.maxSelections === 0 ? (
-                <EmptyPanel>{`此飲品不提供${getGroupTitle(group.optionType)}選項。`}</EmptyPanel>
-              ) : (
-                <View style={styles.optionWrap}>
-                  {group.options.map((option) => (
-                    <OptionButton
-                      key={option.id}
-                      active={selectedOptionIds.includes(option.id)}
-                      label={`${option.label}${option.priceDelta ? ` +${formatCurrency(option.priceDelta)}` : ""}`}
-                      onPress={() => setSelectedOptionIds((current) => toggleOption(current, option.id, group))}
-                    />
-                  ))}
-                </View>
+            <View style={styles.group}>
+              <Text accessibilityRole="header" style={styles.groupTitle}>小計</Text>
+              <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.subtotal}>{formatCurrency(subtotal)}</Text>
+            </View>
+
+            <View style={styles.actionBlock}>
+              <PrimaryButton
+                label={editOrderItem ? "儲存修改" : editOrderId ? "加入訂單並重新預授權" : "加入購物車"}
+                onPress={addToCart}
+              />
+              {submitted ? <Notice message="已加入購物車。" tone="success" /> : null}
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.subtitleRow}>
+              <Icon color={colors.textSecondary} name="people" size={26} />
+              <Text style={styles.subtitle}>{groupBuyActivity.title}</Text>
+            </View>
+
+            <InfoBanner message="先選擇飲料，再設定甜度、冰塊與加料" />
+
+            <View style={styles.listBlock}>
+              <AccentHeading title="飲品菜單" />
+              <CategoryChips categories={categories} onChange={setCategory} value={category} />
+            </View>
+
+            <View style={styles.listBlock}>
+              <Text accessibilityRole="header" style={styles.groupTitle}>人氣推薦</Text>
+              {filteredDrinks.length ? filteredDrinks.map((item) => (
+                <DrinkRow
+                  key={item.id}
+                  name={item.name}
+                  onPress={() => {
+                    setDrinkId(item.id);
+                    setSelectedOptionIds(buildInitialSelections(item, null));
+                    setSubmitted(false);
+                    setCustomizing(true);
+                  }}
+                  priceText={formatCurrency(item.basePrice)}
+                  recommended={item.id === storeDrinks[0]?.id}
+                />
+              )) : (
+                <EmptyPanel>此分類目前沒有品項。</EmptyPanel>
               )}
-              {group.optionType === "topping" && group.maxSelections > 0 ? (
-                <Text style={styles.meta}>最多可選 {group.maxSelections} 種加料。</Text>
-              ) : null}
-            </Section>
-          ))}
-
-          <Section title="數量">
-            <QuantityStepper
-              decreaseLabel="減少一杯"
-              increaseLabel="增加一杯"
-              onDecrease={() => setQuantity((value) => Math.max(1, value - 1))}
-              onIncrease={() => setQuantity((value) => value + 1)}
-              value={quantity}
-            />
-          </Section>
-
-          <Section title="小計">
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.subtotal}>{formatCurrency(subtotal)}</Text>
-          </Section>
-
-          <View style={styles.actionBlock}>
-            <PrimaryButton
-              label={editOrderItem ? "儲存修改" : editOrderId ? "加入訂單並重新預授權" : "加入購物車"}
-              onPress={() => {
-                const orderItem = buildCartItem({
-                  drink,
-                  store,
-                  groupBuyActivity,
-                  quantity,
-                  unitPrice,
-                  subtotal,
-                  selectedOptions,
-                  selectedOptionIds
-                });
-                if (editOrderItem) {
-                  // route.params must stay JSON-serializable, so the caller (CustomerOrdersScreen)
-                  // passes editOrderId instead of a save callback; the merge-and-replace logic that
-                  // used to live in that callback happens here instead, against the order's current
-                  // items looked up fresh from appState.
-                  const updatedItem = { ...editOrderItem, ...orderItem };
-                  const nextItems = (editOrder?.items ?? []).map((current) => (
-                    current.id === updatedItem.id ? updatedItem : current
-                  ));
-                  actions.updateOrderItems(editOrderId, nextItems);
-                  setSubmitted(true);
-                  navigation.goBack();
-                  return;
-                }
-                if (editOrderId) {
-                  actions.addToCart({
-                    ...orderItem,
-                    targetOrderId: editOrderId,
-                  });
-                  setSubmitted(true);
-                  setCustomizing(false);
-                  setQuantity(1);
-                  return;
-                }
-                actions.addToCart({
-                  ...orderItem
-                });
-                setSubmitted(true);
-                setCustomizing(false);
-                setQuantity(1);
-              }}
-            />
-            {submitted ? <Notice message="已加入購物車。" tone="success" /> : null}
-          </View>
-        </>
-      ) : (
-        <EmptyPanel>請先選擇飲料，再設定甜度、冰塊與加料。</EmptyPanel>
-      )}
-      {cartQuantity > 0 ? <View style={styles.cartSpacer} /> : null}
+              <Text style={styles.meta}>點選飲品，設定客製化選項</Text>
+            </View>
+          </>
+        )}
+        {cartQuantity > 0 ? <View style={styles.cartSpacer} /> : null}
       </MobileScreen>
       {cartQuantity > 0 ? (
         <Pressable
@@ -287,7 +290,7 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.floatingCartTitle}>購物車</Text>
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.floatingCartMeta}>{formatCurrency(cartTotal)}</Text>
           </View>
-          <View style={styles.floatingCartArrow} />
+          <Icon color={colors.onAccent} name="chevronRight" size={24} />
         </Pressable>
       ) : null}
     </View>
@@ -346,6 +349,17 @@ function buildCartItem({ drink, store, groupBuyActivity, quantity, unitPrice, su
   };
 }
 
+// Display order only (size, sweetness, ice, topping), whatever order the menu data lists the groups in.
+const GROUP_DISPLAY_ORDER = ["size", "sweetness", "ice", "topping"];
+
+function sortGroupsForDisplay(groups) {
+  const rank = (optionType) => {
+    const index = GROUP_DISPLAY_ORDER.indexOf(optionType);
+    return index === -1 ? GROUP_DISPLAY_ORDER.length : index;
+  };
+  return [...groups].sort((left, right) => rank(left.optionType) - rank(right.optionType));
+}
+
 function getGroupTitle(optionType) {
   return { size: "尺寸", sweetness: "甜度", ice: "冰塊", topping: "加料" }[optionType] || optionType;
 }
@@ -358,67 +372,59 @@ const makeStyles = (colors) => StyleSheet.create({
   screenWrap: {
     flex: 1
   },
-  menuHeader: {
-    gap: spacing.s12
-  },
-  menuHero: {
-    gap: spacing.s4
-  },
-  shopName: {
-    ...typeScale.sectionTitle,
-    color: colors.text
-  },
-  groupBuyActivityName: {
-    ...typeScale.bodyDense,
-    color: colors.textSecondary
-  },
-  categoryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.s8
-  },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.s12
-  },
-  // The card keeps its 2px outline box; picking a drink only recolours it.
-  activeMenuItem: {
-    borderColor: colors.accent
-  },
-  hiddenItem: {
-    display: "none"
-  },
-  menuTextGroup: {
-    flex: 1,
-    gap: spacing.s4
-  },
-  nameRow: {
+  subtitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.s8
   },
-  menuItemName: {
+  subtitle: {
     ...typeScale.button,
-    flexShrink: 1,
+    fontSize: 17,
     color: colors.text
   },
-  hotTag: {
-    paddingHorizontal: spacing.s8,
-    borderRadius: radii.xs,
+  listBlock: {
+    gap: spacing.s12
+  },
+  hero: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s16
+  },
+  heroPhoto: {
+    width: 128,
+    height: 160,
+    borderRadius: radii.md,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: colors.recess
   },
-  hotTagText: {
-    ...typeScale.label,
-    color: colors.accentInk
+  heroText: {
+    flex: 1,
+    gap: spacing.s8
   },
-  menuDescription: {
-    ...typeScale.caption,
+  heroName: {
+    ...typeScale.screenTitle,
+    color: colors.text
+  },
+  heroPrice: {
+    ...typeScale.amount,
+    color: colors.text
+  },
+  heroDescription: {
+    ...typeScale.body,
     color: colors.textSecondary
   },
-  menuPrice: {
-    ...typeScale.price,
+  divider: {
+    height: 2,
+    backgroundColor: colors.lineRow
+  },
+  group: {
+    gap: spacing.s12
+  },
+  groupTitle: {
+    ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
     color: colors.text
   },
   optionWrap: {
@@ -428,10 +434,12 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   subtotal: {
     ...typeScale.amount,
+    fontSize: 32,
+    lineHeight: 38,
     color: colors.text
   },
   meta: {
-    ...typeScale.caption,
+    ...typeScale.body,
     color: colors.textSecondary
   },
   actionBlock: {
@@ -455,7 +463,7 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: spacing.s12,
     paddingVertical: spacing.s8,
     paddingLeft: spacing.s8,
-    paddingRight: spacing.s20,
+    paddingRight: spacing.s16,
     borderRadius: radii.pill,
     backgroundColor: colors.accent,
     elevation: 8
@@ -483,14 +491,5 @@ const makeStyles = (colors) => StyleSheet.create({
   floatingCartMeta: {
     ...typeScale.caption,
     color: colors.onAccent
-  },
-  // A right-pointing chevron drawn like the back arrow in MobileScreen (a 10px corner, rotated).
-  floatingCartArrow: {
-    width: 10,
-    height: 10,
-    borderColor: colors.onAccent,
-    borderTopWidth: sizes.stroke,
-    borderRightWidth: sizes.stroke,
-    transform: [{ rotate: "45deg" }]
   }
 });

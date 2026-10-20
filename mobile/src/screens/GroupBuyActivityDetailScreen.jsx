@@ -1,21 +1,33 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { AccentHeading } from "../components/AccentHeading";
 import { ActivitySyncNotice } from "../components/ActivitySyncNotice";
-import { Card } from "../components/Card";
 import { EmptyPanel } from "../components/EmptyPanel";
+import { Icon } from "../components/Icon";
 import { MobileScreen, Section } from "../components/MobileScreen";
-import { DiscountSummaryCard } from "../components/DiscountSummaryCard";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { PearlTray } from "../components/PearlTray";
+import { ProgressBar } from "../components/ProgressBar";
 import { StatusBadge } from "../components/StatusBadge";
-import { radii, sizes, spacing, typeScale } from "../theme/tokens";
+import { WarmPill } from "../components/WarmPill";
+import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
-import { formatDealFactorLabel } from "../utils/discountPercentFormat";
+import { formatDealFactorLabelWithSpace, formatDiscountPercentAsDealFactor } from "../utils/discountPercentFormat";
+import { formatShortDateTime, formatShortTimeRange } from "../utils/shortDateTime";
 import { getGroupBuyActivityStore } from "../utils/groupBuyActivityStores";
 import { getGroupBuyActivityJoinAction } from "../utils/groupBuyActivityJoinState";
-import { getGroupBuyActivityProgress } from "../utils/groupBuyActivityProgress";
+import {
+  findTierByCups,
+  getGroupBuyActivityDiscountInfo,
+  getGroupBuyActivityProgress,
+  isGroupBuyActivityOpen
+} from "../utils/groupBuyActivityProgress";
 import { goToCustomerHome } from "../navigation/goToCustomerHome";
-import { useThemedStyles } from "../theme/ThemeContext";
+import { useTheme, useThemedStyles } from "../theme/ThemeContext";
+
+// Standing rules shown when the activity has no notices of its own (same rules as the withdrawal-lock
+// notice and the progress screen: docs/open-questions.md, "團購活動與優惠" / "訂單").
+const STANDING_NOTICE = "只有預授權成功的杯數才計入優惠門檻；截止前 30 分鐘內不能減少或退出訂單。";
 
 export function GroupBuyActivityDetailScreen({ navigation, route, appState, actions, selectedCustomerId }) {
   const styles = useThemedStyles(makeStyles);
@@ -49,12 +61,6 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
   const store = getGroupBuyActivityStore(groupBuyActivity);
   const withdrawalLocked = isWithdrawalLocked(groupBuyActivity);
   const joinAction = getGroupBuyActivityJoinAction(groupBuyActivity, Boolean(existingOrder));
-  // groupBuyActivity.targetCups is always the FIRST tier's threshold (see
-  // groupBuyActivityReadRepository.js), not a ceiling -- once currentCups passes it, showing
-  // "current / targetCups" reads as an impossible overshoot. getGroupBuyActivityProgress (already
-  // used the same way on the nearby-activities list) swaps in the next unreached tier, or the
-  // highest tier once all are reached.
-  const progress = getGroupBuyActivityProgress(groupBuyActivity);
 
   return (
     <MobileScreen
@@ -62,50 +68,30 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
       onBack={() => navigation.goBack()}
     >
       <ActivitySyncNotice status={activitySyncStatus} onRetry={retryActivitySync} />
-      <Section title="店家資訊">
-        <Card>
-          <View style={styles.rowBetween}>
-            <Text style={[styles.title, styles.flex]}>{store?.name ?? "店家資料未提供"}</Text>
-            <StatusBadge value={groupBuyActivity.status} />
-          </View>
-          <Text style={styles.meta}>{store?.address || "地址未提供"}</Text>
-          {store?.phone ? <Text style={styles.meta}>{store.phone}</Text> : null}
-        </Card>
-      </Section>
+      <StoreCard groupBuyActivity={groupBuyActivity} store={store} />
 
-      <Section title="目前進度">
-        <Text style={styles.title}>{groupBuyActivity.title}</Text>
-        <PearlTray
-          currentCups={progress.currentCups}
-          targetCups={progress.nextTarget}
-          participantCount={groupBuyActivity.participantCount}
-          remainingTimeText={groupBuyActivity.remainingTimeText}
-        />
-        <DiscountSummaryCard groupBuyActivity={groupBuyActivity} />
-        <View style={styles.schedule}>
-          <Text style={styles.meta}>截止：{groupBuyActivity.endTime}</Text>
-          <Text style={styles.meta}>取貨：{groupBuyActivity.pickupTime}</Text>
+      <Text style={styles.activityTitle}>{groupBuyActivity.title}</Text>
+
+      <ProgressCard groupBuyActivity={groupBuyActivity} />
+
+      <View style={styles.block}>
+        <AccentHeading title="杯數優惠" />
+        <View style={styles.tierCard}>
+          {groupBuyActivity.tiers.map((tier, index) => (
+            <View key={tier.cups} style={[styles.tierRow, index > 0 && styles.tierRowDivider]}>
+              <TierIcon />
+              <Text style={[styles.tierText, styles.flex]}>滿 {tier.cups} 杯</Text>
+              <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.tierValue}>
+                打 {formatDealFactorLabelWithSpace(tier.discountPercent)}
+              </Text>
+            </View>
+          ))}
         </View>
-      </Section>
+      </View>
 
-      <Section title="杯數級距">
-        {groupBuyActivity.tiers.map((tier) => (
-          <View key={tier.cups} style={styles.tierRow}>
-            <Text style={styles.tierText}>滿 {tier.cups} 杯</Text>
-            <Text style={styles.tierValue}>打 {formatDealFactorLabel(tier.discountPercent) || "—"}</Text>
-          </View>
-        ))}
-      </Section>
-
-      <Section title="注意事項">
-        {withdrawalLocked ? <Notice tone="warning" message="目前距截止時間 30 分鐘內：仍可加入，既有訂單只能增加飲料，不能減少或退出。" /> : null}
-        {groupBuyActivity.cancellationReason ? <Notice tone="danger" message={`取消原因：${groupBuyActivity.cancellationReason}`} /> : null}
-        {groupBuyActivity.notices.length > 0 ? (
-          <View style={styles.notes}>
-            {groupBuyActivity.notices.map((notice) => <Text key={notice} style={styles.meta}>· {notice}</Text>)}
-          </View>
-        ) : null}
-      </Section>
+      {withdrawalLocked ? <Notice tone="warning" message="目前距截止時間 30 分鐘內：仍可加入，既有訂單只能增加飲料，不能減少或退出。" /> : null}
+      {groupBuyActivity.cancellationReason ? <Notice tone="danger" message={`取消原因：${groupBuyActivity.cancellationReason}`} /> : null}
+      <NoticesCard notices={groupBuyActivity.notices} />
 
       <View style={styles.actions}>
         <PrimaryButton
@@ -129,46 +115,339 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
   );
 }
 
+function TierIcon() {
+  const { colors } = useTheme();
+  return <Icon color={colors.accent} name="tag" size={26} />;
+}
+
+function StoreCard({ groupBuyActivity, store }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const recruiting = groupBuyActivity.status === "recruiting";
+  return (
+    <View style={styles.storeCard}>
+      <View style={styles.storeLogo}>
+        <Icon color={colors.accent} name="store" size={40} />
+      </View>
+      <View style={[styles.flex, styles.storeInfo]}>
+        <View style={styles.storeTop}>
+          <Text style={[styles.storeName, styles.flex]}>{store?.name ?? "店家資料未提供"}</Text>
+          {recruiting ? <WarmPill label="招募中" /> : <StatusBadge value={groupBuyActivity.status} />}
+        </View>
+        <View style={styles.iconLine}>
+          <Icon color={colors.textSecondary} name="pin" size={20} />
+          <Text style={[styles.lineText, styles.flex]}>{store?.address || "地址未提供"}</Text>
+        </View>
+        {store?.phone ? (
+          <View style={styles.iconLine}>
+            <Icon color={colors.textSecondary} name="phone" size={20} />
+            <Text style={[styles.lineText, styles.flex]}>{store.phone}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+// "Current progress": cups and people, the amber bar with its percentage, what the next tier needs, and the
+// deadline / pickup window. groupBuyActivity.targetCups is always the FIRST tier's threshold, not a ceiling,
+// so the denominator comes from getGroupBuyActivityProgress (next unreached tier, or the highest one).
+function ProgressCard({ groupBuyActivity }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const progress = getGroupBuyActivityProgress(groupBuyActivity);
+  const discount = getGroupBuyActivityDiscountInfo(groupBuyActivity);
+  const isOpen = isGroupBuyActivityOpen(groupBuyActivity);
+  const nextTier = findTierByCups(groupBuyActivity, progress.nextTarget);
+  const deadlineText = formatShortDateTime(groupBuyActivity.deadlineAt) || groupBuyActivity.endTime;
+  const pickupText = formatShortTimeRange(groupBuyActivity.pickupStartAt, groupBuyActivity.pickupEndAt) || groupBuyActivity.pickupTime;
+  const dealFactor = discount.isQualified ? formatDiscountPercentAsDealFactor(discount.currentTierDiscountPercent) : null;
+
+  return (
+    <View style={styles.progressCard}>
+      <View style={styles.progressHeader}>
+        <Text style={styles.progressTitle}>目前進度</Text>
+        {isOpen && groupBuyActivity.remainingTimeText ? (
+          <View style={styles.inline}>
+            <Icon color={colors.alert} name="clock" size={24} />
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.remaining}>{groupBuyActivity.remainingTimeText}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.bigCups}>
+          {progress.currentCups} / {progress.nextTarget}
+          <Text style={styles.bigCupsUnit}> 杯</Text>
+        </Text>
+        <Text style={styles.people}>{groupBuyActivity.participantCount ?? 0} 人參與</Text>
+      </View>
+
+      <View style={styles.barRow}>
+        <View style={styles.flex}>
+          <ProgressBar percent={progress.progressPercent} />
+        </View>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.percent}>{progress.progressPercent}%</Text>
+      </View>
+
+      {isOpen && nextTier && progress.remainingCups > 0 ? (
+        <Text style={styles.offer}>
+          再 <Text style={styles.offerStrong}>{progress.remainingCups}</Text> 杯享{" "}
+          <Text style={styles.offerStrong}>{formatDiscountPercentAsDealFactor(nextTier.discountPercent)}</Text> 折
+        </Text>
+      ) : null}
+      {dealFactor ? (
+        <Text style={styles.estimate}>
+          {discount.isEstimated ? `目前預估享 ${dealFactor} 折（截止前為預估值）` : `最終享 ${dealFactor} 折`}
+        </Text>
+      ) : null}
+
+      <View style={styles.divider} />
+      <View style={styles.scheduleRow}>
+        <View style={[styles.scheduleItem, styles.flex]}>
+          <Icon color={colors.textSecondary} name="calendar" size={26} />
+          <View style={styles.flex}>
+            <Text style={styles.scheduleLabel}>截止</Text>
+            <Text style={styles.scheduleText}>{deadlineText}</Text>
+          </View>
+        </View>
+        <View style={styles.scheduleDivider} />
+        <View style={[styles.scheduleItem, styles.flex]}>
+          <Icon color={colors.textSecondary} name="bag" size={26} />
+          <View style={styles.flex}>
+            <Text style={styles.scheduleLabel}>取餐</Text>
+            <Text style={styles.scheduleText}>{pickupText}</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// Collapsed by default, like the blueprint. The activity's own notices when it has any, otherwise the
+// standing rules.
+function NoticesCard({ notices }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(false);
+  const lines = notices && notices.length > 0 ? notices : [STANDING_NOTICE];
+  return (
+    <View style={styles.noticeCard}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((current) => !current)}
+        style={styles.noticeHeader}
+      >
+        <Text style={styles.noticeTitle}>注意事項</Text>
+        <Icon color={colors.textSecondary} name={open ? "chevronUp" : "chevronDown"} size={24} />
+      </Pressable>
+      {open ? (
+        <View style={styles.noticeBody}>
+          {lines.map((line) => <Text key={line} style={styles.lineText}>· {line}</Text>)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 const makeStyles = (colors) => StyleSheet.create({
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.s12
-  },
   flex: {
     flex: 1
   },
-  title: {
+  inline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s8
+  },
+  block: {
+    gap: spacing.s12
+  },
+  storeCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.s16,
+    padding: spacing.s16,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  storeLogo: {
+    width: 72,
+    height: 72,
+    borderRadius: radii.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.recess
+  },
+  storeInfo: {
+    gap: spacing.s8
+  },
+  storeTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.s8
+  },
+  storeName: {
     ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
     color: colors.text
   },
-  meta: {
+  iconLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s8
+  },
+  lineText: {
     ...typeScale.body,
     color: colors.textSecondary
   },
-  schedule: {
-    gap: spacing.s4
+  activityTitle: {
+    ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
+    color: colors.text
   },
-  tierRow: {
-    minHeight: sizes.tap,
+  progressCard: {
+    gap: spacing.s12,
+    padding: spacing.s20,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  progressHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: radii.sm,
-    backgroundColor: colors.recess,
-    paddingHorizontal: spacing.s16
+    gap: spacing.s12
+  },
+  progressTitle: {
+    ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
+    color: colors.text
+  },
+  remaining: {
+    ...typeScale.body,
+    color: colors.textSecondary
+  },
+  bigCups: {
+    ...typeScale.pearlNumber,
+    fontSize: 44,
+    lineHeight: 52,
+    color: colors.text
+  },
+  bigCupsUnit: {
+    ...typeScale.body,
+    fontSize: 20,
+    color: colors.textSecondary
+  },
+  people: {
+    ...typeScale.body,
+    color: colors.textSecondary
+  },
+  barRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s12
+  },
+  percent: {
+    ...typeScale.body,
+    minWidth: 40,
+    textAlign: "right",
+    color: colors.textSecondary
+  },
+  offer: {
+    ...typeScale.body,
+    fontSize: 18,
+    lineHeight: 26,
+    color: colors.text
+  },
+  offerStrong: {
+    ...typeScale.price,
+    color: colors.text
+  },
+  estimate: {
+    ...typeScale.caption,
+    color: colors.warm
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.lineRow
+  },
+  scheduleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s12
+  },
+  scheduleItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s8
+  },
+  scheduleLabel: {
+    ...typeScale.caption,
+    color: colors.textSecondary
+  },
+  scheduleText: {
+    ...typeScale.bodyDense,
+    color: colors.text
+  },
+  scheduleDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: colors.lineRow
+  },
+  tierCard: {
+    paddingHorizontal: spacing.s16,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  tierRow: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s12
+  },
+  tierRowDivider: {
+    borderTopWidth: 1,
+    borderTopColor: colors.lineRow
   },
   tierText: {
     ...typeScale.body,
     color: colors.text
   },
   tierValue: {
-    ...typeScale.body,
-    fontWeight: typeScale.label.fontWeight,
-    color: colors.accentInk
+    ...typeScale.price,
+    color: colors.accent
   },
-  notes: {
-    gap: spacing.s8
+  noticeCard: {
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  noticeHeader: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.s16
+  },
+  noticeTitle: {
+    ...typeScale.sectionTitle,
+    color: colors.text
+  },
+  noticeBody: {
+    gap: spacing.s8,
+    paddingHorizontal: spacing.s16,
+    paddingBottom: spacing.s16
   },
   // MobileScreen leaves 24 between its direct children; the two buttons belong together.
   actions: {

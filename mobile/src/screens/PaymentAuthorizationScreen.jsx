@@ -151,36 +151,55 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
       title={isManualRepayment ? "重新付款" : "付款預授權"}
       onBack={() => navigation.goBack()}
     >
-      <Section title={isManualRepayment ? "付款狀態" : "預授權狀態"}>
-        <Card>
-          <StatusBadge owner="payment" value={payment.status} />
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.amount}>{formatCurrency(isManualRepayment ? (manualRepayment?.finalAmount ?? payment.finalAmount ?? payment.originalAmount) : payment.originalAmount)}</Text>
-          {isManualRepayment ? (
-            <View style={styles.metaGroup}>
-              <Text style={styles.meta}>{repaymentState.statusText}</Text>
-              {manualRepayment?.reason !== "manual_repayment_expired" ? (
-                <Text style={styles.meta}>可付款至 {formatRepaymentCutoff(manualRepayment?.cutoffAt)}。</Text>
-              ) : null}
-            </View>
-          ) : (
-            <View style={styles.metaGroup}>
-              <Text style={styles.meta}>目前僅預授權，尚未正式扣款。</Text>
-              <Text style={styles.meta}>達標後將依優惠價請款。</Text>
-            </View>
-          )}
-        </Card>
-      </Section>
+      {/* Layout follows the 2026-10 blueprint; the figures stay what the payment really is: the amount here is
+          the pre-authorized (original) amount, and the "僅預授權、尚未正式扣款" lines stay. */}
+      <View style={styles.heroCard}>
+        <StatusBadge owner="payment" value={payment.status} />
+        <Text style={styles.heroLabel}>{isManualRepayment ? "應付金額" : "預授權金額"}</Text>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.heroAmount}>
+          {formatYuan(isManualRepayment ? (manualRepayment?.finalAmount ?? payment.finalAmount ?? payment.originalAmount) : payment.originalAmount)}
+        </Text>
+        {isManualRepayment ? (
+          <View style={styles.metaGroup}>
+            <Text style={styles.meta}>{repaymentState.statusText}</Text>
+            {manualRepayment?.reason !== "manual_repayment_expired" ? (
+              <Text style={styles.meta}>可付款至 {formatRepaymentCutoff(manualRepayment?.cutoffAt)}。</Text>
+            ) : null}
+          </View>
+        ) : (
+          <View style={styles.metaGroup}>
+            <Text style={styles.meta}>目前僅預授權，尚未正式扣款。</Text>
+            <Text style={styles.meta}>達標後將依優惠價請款。</Text>
+          </View>
+        )}
+      </View>
 
-      <Section title="授權金額">
-        <Card compact>
-          <Text style={styles.providerName}>LINE Pay</Text>
-          <Text style={styles.providerMeta}>付款對象：{payment.recipientName}</Text>
-        </Card>
-        <View style={styles.amountRows}>
-          <AmountRow label="訂單原價" value={payment.originalAmount} />
-          <AmountRow emphasis label="已授權金額" value={payment.authorizedAmount} />
+      <View style={styles.block}>
+        <Text accessibilityRole="header" style={styles.heading}>付款方式</Text>
+        <View style={styles.methodCard}>
+          <Text style={styles.linePayWordmark}>LINE Pay</Text>
+          <View style={styles.methodText}>
+            <Text style={styles.providerName}>LINE Pay</Text>
+            <Text style={styles.providerMeta}>目前僅提供 LINE Pay 付款。</Text>
+            <Text style={styles.providerMeta}>付款對象：{payment.recipientName}</Text>
+          </View>
         </View>
-      </Section>
+      </View>
+
+      <View style={styles.block}>
+        <Text accessibilityRole="header" style={styles.heading}>金額明細</Text>
+        <View style={styles.detailCard}>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>訂單原價</Text>
+            <Text style={styles.detailValue}>{formatYuanOrPending(payment.originalAmount)}</Text>
+          </View>
+          <View style={styles.detailDivider} />
+          <View style={styles.detailRow}>
+            <Text style={styles.detailTotalLabel}>已授權金額</Text>
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.detailTotalValue}>{formatYuanOrPending(payment.authorizedAmount)}</Text>
+          </View>
+        </View>
+      </View>
 
       {needsPickupRuleConsent ? (
         <Section title="付款前確認">
@@ -681,6 +700,15 @@ function buildLinePayProducts(order, payment, revisionPayment = null) {
   ];
 }
 
+// The blueprint writes amounts in this screen as "300 元".
+function formatYuan(amount) {
+  return `${amount} 元`;
+}
+
+function formatYuanOrPending(amount) {
+  return amount == null ? "待計算" : formatYuan(amount);
+}
+
 function AmountRow({ label, value, emphasis = false }) {
   return <ValueRow emphasis={emphasis} label={label} value={value == null ? "待計算" : formatCurrency(value)} />;
 }
@@ -697,9 +725,88 @@ function MessageNotice({ isError, message }) {
 }
 
 const makeStyles = (colors, tones) => StyleSheet.create({
-  amount: {
-    ...typeScale.amount,
+  heroCard: {
+    alignItems: "flex-start",
+    gap: spacing.s8,
+    padding: spacing.s20,
+    borderRadius: radii.lg,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  heroLabel: {
+    ...typeScale.body,
+    color: colors.textSecondary
+  },
+  heroAmount: {
+    ...typeScale.pearlNumber,
+    fontSize: 44,
+    lineHeight: 52,
     color: colors.text
+  },
+  block: {
+    gap: spacing.s12
+  },
+  heading: {
+    ...typeScale.screenTitle,
+    fontSize: 22,
+    lineHeight: 30,
+    color: colors.text
+  },
+  methodCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s16,
+    padding: spacing.s16,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  // A plain text stand-in for the LINE Pay wordmark (LINE's own green); no image asset is bundled.
+  linePayWordmark: {
+    ...typeScale.screenTitle,
+    color: "#06C755"
+  },
+  methodText: {
+    flex: 1,
+    gap: spacing.s4
+  },
+  detailCard: {
+    gap: spacing.s12,
+    padding: spacing.s20,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.s12
+  },
+  detailLabel: {
+    ...typeScale.body,
+    color: colors.textSecondary
+  },
+  detailValue: {
+    ...typeScale.price,
+    color: colors.text
+  },
+  detailDivider: {
+    height: 1,
+    backgroundColor: colors.lineRow
+  },
+  detailTotalLabel: {
+    ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
+    color: colors.text
+  },
+  detailTotalValue: {
+    ...typeScale.amount,
+    color: colors.accent
   },
   meta: {
     ...typeScale.body,

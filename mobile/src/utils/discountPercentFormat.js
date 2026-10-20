@@ -28,3 +28,9 @@ export function formatDealFactorLabel(discountPercent) {
   const dealFactor = formatDiscountPercentAsDealFactor(discountPercent);
   return dealFactor == null ? "" : `${dealFactor}折`;
 }
+
+// "9折" -> "9 折", "8.5折" -> "8.5 折": the blueprint puts a space before 折. Falls back to a dash.
+export function formatDealFactorLabelWithSpace(discountPercent) {
+  const label = formatDealFactorLabel(discountPercent);
+  return label ? label.replace(/折$/, " 折") : "—";
+}

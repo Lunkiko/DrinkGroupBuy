@@ -19,6 +19,7 @@ export const colors = {
   // progress bar with a pale track, and a red for the countdown clock. These deliberately sit outside the
   // earlier "no orange in the app" rule (docs/ui-style-guide.md); the blueprint wins.
   warm: "#EE5F0B",
+  warmSoft: "#FFF1E6", // pill background behind a `warm` label
   progressFill: "#FBBF24",
   progressTrack: "#FEF3C7",
   alert: "#DC2626"
@@ -52,6 +53,7 @@ export const darkColors = {
   lineRow: "#1E2C47",
   lineInput: "#6F86AD",
   warm: "#FB923C",
+  warmSoft: "#3B2410",
   progressFill: "#FBBF24",
   progressTrack: "#3A2F0E",
   alert: "#F87171"

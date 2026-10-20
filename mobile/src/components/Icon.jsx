@@ -143,6 +143,143 @@ const GLYPHS = {
     </>
   ),
 
+  store: ({ u, tint, stroke }) => (
+    <>
+      <View
+        style={at(u, 3, 4.5, 18, 6.5, {
+          borderWidth: stroke,
+          borderColor: tint,
+          borderTopLeftRadius: 3 * u,
+          borderTopRightRadius: 3 * u,
+          borderBottomLeftRadius: 2 * u,
+          borderBottomRightRadius: 2 * u
+        })}
+      />
+      <View
+        style={at(u, 5, 10.5, 14, 10.5, {
+          borderLeftWidth: stroke,
+          borderRightWidth: stroke,
+          borderBottomWidth: stroke,
+          borderColor: tint,
+          borderBottomLeftRadius: 2 * u,
+          borderBottomRightRadius: 2 * u
+        })}
+      />
+      <View
+        style={at(u, 10, 14.5, 4, 6.5, {
+          borderLeftWidth: stroke,
+          borderRightWidth: stroke,
+          borderTopWidth: stroke,
+          borderColor: tint,
+          borderTopLeftRadius: 2 * u,
+          borderTopRightRadius: 2 * u
+        })}
+      />
+    </>
+  ),
+
+  phone: ({ u, tint, stroke }) => (
+    <>
+      <View style={at(u, 6.5, 2.5, 11, 19, { borderWidth: stroke, borderColor: tint, borderRadius: 3 * u })} />
+      <View style={at(u, 10.5, 17.5, 3, stroke / u, { backgroundColor: tint, borderRadius: u })} />
+    </>
+  ),
+
+  calendar: ({ u, tint, stroke }) => (
+    <>
+      <View style={at(u, 3.5, 5, 17, 16, { borderWidth: stroke, borderColor: tint, borderRadius: 3 * u })} />
+      <View style={at(u, 3.5, 9.5, 17, stroke / u, { backgroundColor: tint })} />
+      <View style={at(u, 8, 2.5, stroke / u, 4.5, { backgroundColor: tint, borderRadius: u })} />
+      <View style={at(u, 16 - stroke / u, 2.5, stroke / u, 4.5, { backgroundColor: tint, borderRadius: u })} />
+      <View style={at(u, 7.3, 13, 2.4, 2.4, { backgroundColor: tint, borderRadius: 0.6 * u })} />
+      <View style={at(u, 10.8, 13, 2.4, 2.4, { backgroundColor: tint, borderRadius: 0.6 * u })} />
+      <View style={at(u, 14.3, 13, 2.4, 2.4, { backgroundColor: tint, borderRadius: 0.6 * u })} />
+      <View style={at(u, 7.3, 16.6, 2.4, 2.4, { backgroundColor: tint, borderRadius: 0.6 * u })} />
+      <View style={at(u, 10.8, 16.6, 2.4, 2.4, { backgroundColor: tint, borderRadius: 0.6 * u })} />
+    </>
+  ),
+
+  tag: ({ u, tint, stroke }) => (
+    <>
+      <View
+        style={at(u, 5.5, 5.5, 13, 13, {
+          borderWidth: stroke,
+          borderColor: tint,
+          borderRadius: 3 * u,
+          transform: [{ rotate: "45deg" }]
+        })}
+      />
+      <View style={at(u, 8.2, 8.2, 3.4, 3.4, { borderWidth: stroke * 0.8, borderColor: tint, borderRadius: 2 * u })} />
+    </>
+  ),
+
+  shield: ({ u, tint, stroke }) => (
+    <>
+      <View
+        style={at(u, 4.5, 2.5, 15, 18, {
+          borderWidth: stroke,
+          borderColor: tint,
+          borderTopLeftRadius: 3 * u,
+          borderTopRightRadius: 3 * u,
+          borderBottomLeftRadius: 8 * u,
+          borderBottomRightRadius: 8 * u
+        })}
+      />
+      <View
+        style={at(u, 8.3, 8, 7.4, 4.4, {
+          borderLeftWidth: stroke,
+          borderBottomWidth: stroke,
+          borderColor: tint,
+          transform: [{ rotate: "-45deg" }]
+        })}
+      />
+    </>
+  ),
+
+  // A picture frame with a sun and two hills: the placeholder for a drink photo or store logo.
+  image: ({ u, tint, stroke }) => (
+    <>
+      <View style={at(u, 3.5, 4.5, 17, 15, { borderWidth: stroke, borderColor: tint, borderRadius: 3 * u })} />
+      <View style={at(u, 14.5, 7.8, 3, 3, { backgroundColor: tint, borderRadius: 1.5 * u })} />
+      <View style={at(u, 5.6, 12.6, 6.4, stroke / u, { backgroundColor: tint, borderRadius: u, transform: [{ rotate: "-40deg" }] })} />
+      <View style={at(u, 9.4, 12.6, 6.4, stroke / u, { backgroundColor: tint, borderRadius: u, transform: [{ rotate: "40deg" }] })} />
+    </>
+  ),
+
+  // A filled disc with a lowercase "i": `cutout` is the colour of the dot and bar.
+  info: ({ u, tint, hole }) => (
+    <>
+      <View style={at(u, 2.5, 2.5, 19, 19, { backgroundColor: tint, borderRadius: 9.5 * u })} />
+      <View style={at(u, 10.7, 6.4, 2.6, 2.6, { backgroundColor: hole, borderRadius: 1.3 * u })} />
+      <View style={at(u, 10.7, 10.4, 2.6, 7, { backgroundColor: hole, borderRadius: 1.3 * u })} />
+    </>
+  ),
+
+  people: ({ u, tint, stroke }) => (
+    <>
+      <View style={at(u, 5.5, 4.5, 7, 7, { borderWidth: stroke, borderColor: tint, borderRadius: 3.5 * u })} />
+      <View
+        style={at(u, 2.5, 13.5, 13, 7, {
+          borderWidth: stroke,
+          borderColor: tint,
+          borderTopLeftRadius: 6.5 * u,
+          borderTopRightRadius: 6.5 * u,
+          borderBottomLeftRadius: 2 * u,
+          borderBottomRightRadius: 2 * u
+        })}
+      />
+      <View style={at(u, 14, 4.5, 5.5, 5.5, { borderWidth: stroke, borderColor: tint, borderRadius: 2.75 * u })} />
+      <View
+        style={at(u, 15.5, 12, 6, 6, {
+          borderTopWidth: stroke,
+          borderRightWidth: stroke,
+          borderColor: tint,
+          borderTopRightRadius: 5 * u
+        })}
+      />
+    </>
+  ),
+
   clock: ({ u, tint, stroke }) => (
     <>
       <View style={at(u, 3, 3, 18, 18, { borderWidth: stroke, borderColor: tint, borderRadius: 9 * u })} />

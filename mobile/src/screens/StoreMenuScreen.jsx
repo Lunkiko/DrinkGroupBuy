@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { Card } from "../components/Card";
+import { AccentHeading } from "../components/AccentHeading";
+import { CategoryChips } from "../components/CategoryChips";
+import { DrinkRow } from "../components/DrinkRow";
 import { EmptyPanel } from "../components/EmptyPanel";
+import { Icon } from "../components/Icon";
+import { InfoBanner } from "../components/InfoBanner";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { TonePill } from "../components/TonePill";
-import { maxFontSizeMultiplier, spacing, typeScale } from "../theme/tokens";
+import { radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { getStoreMenu } from "../utils/apiClient";
 import { formatCurrency } from "../utils/calculations";
-import { useThemedStyles } from "../theme/ThemeContext";
+import { getCategoryLabel } from "../utils/menuCategory";
+import { useTheme, useThemedStyles } from "../theme/ThemeContext";
 
 const businessStatusLabels = {
   open: "營業中",
@@ -26,10 +31,12 @@ const businessStatusTones = {
 
 export function StoreMenuScreen({ navigation, route }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const storeId = route.params?.storeId;
   const [menu, setMenu] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [category, setCategory] = useState("all");
 
   useEffect(() => {
     let active = true;
@@ -75,94 +82,115 @@ export function StoreMenuScreen({ navigation, route }) {
     );
   }
 
+  const categories = [{ id: "all", label: "全部" }, ...[...new Set(storeDrinks.map((item) => item.category))]
+    .map((categoryId) => ({ id: categoryId, label: getCategoryLabel(categoryId) }))];
+  const visibleDrinks = category === "all" ? storeDrinks : storeDrinks.filter((item) => item.category === category);
+
   return (
     <MobileScreen
       title="店家菜單"
-      subtitle="目前沒有進行中的團購，可先查看店家飲品。"
       onBack={() => navigation.goBack()}
     >
-      <Section title="店家資訊">
-        <Card style={styles.storeCard}>
-          <View style={styles.storeHeader}>
+      <View style={styles.storeCard}>
+        <View style={styles.storeLogo}>
+          <Icon color={colors.accent} name="store" size={44} />
+        </View>
+        <View style={styles.storeInfo}>
+          <View style={styles.storeTop}>
             <Text style={styles.storeName}>{store.name}</Text>
             <TonePill
               tone={businessStatusTones[store.businessStatus] ?? "neutral"}
               label={businessStatusLabels[store.businessStatus] ?? store.businessStatus}
             />
           </View>
-          <Text style={styles.meta}>{store.address}</Text>
-          <Text style={styles.meta}>{store.phone}</Text>
-        </Card>
-      </Section>
+          <View style={styles.iconLine}>
+            <Icon color={colors.textSecondary} name="pin" size={20} />
+            <Text style={styles.meta}>{store.address}</Text>
+          </View>
+          {store.phone ? (
+            <View style={styles.iconLine}>
+              <Icon color={colors.textSecondary} name="phone" size={20} />
+              <Text style={styles.meta}>{store.phone}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
 
-      <Section title="目前狀態">
-        <Notice
-          tone="neutral"
-          title="此店家目前沒有進行中的團購"
-          message="此畫面僅供瀏覽菜單，不會加入購物車，也不會建立訂單。"
-        />
-      </Section>
+      <InfoBanner
+        title="目前沒有進行中的團購"
+        message="菜單僅供瀏覽，無法加入購物車或建立訂單"
+      />
 
-      <Section title="飲品菜單">
-        {storeDrinks.length > 0 ? (
-          storeDrinks.map((drink) => (
-            <Card compact key={drink.id}>
-              <View style={styles.drinkTopRow}>
-                <View style={styles.flex}>
-                  <Text style={styles.drinkName}>{drink.name}</Text>
-                  <Text style={styles.description}>{drink.description}</Text>
-                </View>
-                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.price}>{formatCurrency(drink.basePrice)}</Text>
-              </View>
-            </Card>
+      <View style={styles.listBlock}>
+        <View style={styles.headingRow}>
+          <AccentHeading title="飲品菜單" />
+          <Text style={styles.meta}>僅供瀏覽</Text>
+        </View>
+        <CategoryChips categories={categories} onChange={setCategory} value={category} />
+        {visibleDrinks.length > 0 ? (
+          visibleDrinks.map((drink) => (
+            <DrinkRow key={drink.id} name={drink.name} priceText={formatCurrency(drink.basePrice)} />
           ))
         ) : (
-          <EmptyPanel>此店家目前沒有上架飲品。</EmptyPanel>
+          <EmptyPanel>{storeDrinks.length === 0 ? "此店家目前沒有上架飲品。" : "此分類目前沒有品項。"}</EmptyPanel>
         )}
-      </Section>
+      </View>
     </MobileScreen>
   );
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  flex: {
-    flex: 1
-  },
   storeCard: {
-    gap: spacing.s4
-  },
-  storeHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: spacing.s12,
-    marginBottom: spacing.s4
+    gap: spacing.s16,
+    padding: spacing.s16,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
+  },
+  storeLogo: {
+    width: 76,
+    height: 76,
+    borderRadius: radii.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.recess
+  },
+  storeInfo: {
+    flex: 1,
+    gap: spacing.s8
+  },
+  storeTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.s8
   },
   storeName: {
     ...typeScale.sectionTitle,
+    fontSize: 20,
+    lineHeight: 28,
     flex: 1,
     color: colors.text
+  },
+  iconLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s8
   },
   meta: {
     ...typeScale.body,
     color: colors.textSecondary
   },
-  drinkTopRow: {
+  listBlock: {
+    gap: spacing.s12
+  },
+  headingRow: {
     flexDirection: "row",
-    gap: spacing.s12,
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.s4
-  },
-  drinkName: {
-    ...typeScale.button,
-    color: colors.text
-  },
-  description: {
-    ...typeScale.caption,
-    color: colors.textSecondary
-  },
-  price: {
-    ...typeScale.price,
-    color: colors.text
+    gap: spacing.s12
   }
 });

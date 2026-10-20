@@ -10,10 +10,15 @@ import { ProgressBar } from "../components/ProgressBar";
 import { useDevLocationConfig } from "../hooks/useDevLocationConfig";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { groupBuyActivityStatusLabels } from "../types/prototypeTypes";
-import { formatDealFactorLabel } from "../utils/discountPercentFormat";
+import { formatDealFactorLabelWithSpace } from "../utils/discountPercentFormat";
 import { calculateDistanceKm, formatDistanceKm } from "../utils/distance";
 import { getGroupBuyActivityStore } from "../utils/groupBuyActivityStores";
-import { getGroupBuyActivityDiscountInfo, getGroupBuyActivityProgress } from "../utils/groupBuyActivityProgress";
+import {
+  findTierByCups,
+  getGroupBuyActivityDiscountInfo,
+  getGroupBuyActivityProgress,
+  isGroupBuyActivityOpen
+} from "../utils/groupBuyActivityProgress";
 import { useTheme, useThemedStyles } from "../theme/ThemeContext";
 
 export function NearbyGroupBuyActivitiesScreen({ navigation, appState, actions, currentUserProfile, selectedCustomerId, selectedAuthUserId }) {
@@ -196,7 +201,7 @@ export function NearbyGroupBuyActivitiesScreen({ navigation, appState, actions, 
                     {metaText ? <Text numberOfLines={1} style={styles.nearbyMeta}>{metaText}</Text> : null}
                     {nextTier ? (
                       <Text numberOfLines={1} style={styles.nearbyOffer}>
-                        滿 {progress.nextTarget} 杯享 {formatDealWithSpace(nextTier.discountPercent)}
+                        滿 {progress.nextTarget} 杯享 {formatDealFactorLabelWithSpace(nextTier.discountPercent)}
                       </Text>
                     ) : null}
                   </View>
@@ -216,8 +221,7 @@ export function NearbyGroupBuyActivitiesScreen({ navigation, appState, actions, 
 function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
-  // "已成團" (confirmed) still takes orders until the deadline, so "open" is not just status === recruiting.
-  const isOpen = ["recruiting", "confirmed"].includes(groupBuyActivity.status) && groupBuyActivity.canJoin !== false;
+  const isOpen = isGroupBuyActivityOpen(groupBuyActivity);
   const isRecruiting = isOpen && groupBuyActivity.status === "recruiting";
   const pickupReady = groupBuyActivity.status === "ready_for_pickup";
   const discount = getGroupBuyActivityDiscountInfo(groupBuyActivity);
@@ -226,7 +230,7 @@ function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
 
   let hint = null;
   if (isOpen && nextTier && progress.remainingCups > 0) {
-    hint = `再 ${progress.remainingCups} 杯解鎖 ${formatDealWithSpace(nextTier.discountPercent)}`;
+    hint = `再 ${progress.remainingCups} 杯解鎖 ${formatDealFactorLabelWithSpace(nextTier.discountPercent)}`;
   } else if (isOpen) {
     hint = "已達最高優惠級距";
   } else if (pickupReady) {
@@ -271,7 +275,7 @@ function ActiveGroupBuyCard({ groupBuyActivity, progress, storeName, onOpen }) {
         </Text>
         {discount.isQualified ? (
           <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.discountText}>
-            {discount.isEstimated ? "預估享" : "最終享"} {formatDealWithSpace(discount.currentTierDiscountPercent)}
+            {discount.isEstimated ? "預估享" : "最終享"} {formatDealFactorLabelWithSpace(discount.currentTierDiscountPercent)}
           </Text>
         ) : (
           <Text style={styles.noDiscountText}>尚未達到優惠門檻</Text>
@@ -299,16 +303,6 @@ function EmptyCard({ icon, title, description }) {
       {description ? <Text style={styles.emptyDescription}>{description}</Text> : null}
     </View>
   );
-}
-
-function findTierByCups(groupBuyActivity, cups) {
-  return (groupBuyActivity.tiers ?? []).find((tier) => Number(tier.cups ?? tier.targetCups) === Number(cups)) ?? null;
-}
-
-// "9折" -> "9 折", "8.5折" -> "8.5 折": the blueprint puts a space before 折.
-function formatDealWithSpace(discountPercent) {
-  const label = formatDealFactorLabel(discountPercent);
-  return label ? label.replace(/折$/, " 折") : "—";
 }
 
 function isVisibleRecruitingGroupBuyActivity(groupBuyActivity) {
