@@ -74,18 +74,26 @@ export function createDemoGroupBuyActivity(input) {
 // code -> { orderId, orderSnapshot, groupBuyActivity, status }. Populated by
 // createDemoPickupReadyResult (merchant "標記可取餐"), read by lookup/redeem (merchant "取餐核銷").
 const demoPickupCredentials = new Map();
+const demoActivityCapturedOrderIds = new Map();
 
 function createDemoPickupCode() {
-  return String(100000 + Math.floor(Math.random() * 900000));
+  let code;
+  do {
+    code = String(100000 + Math.floor(Math.random() * 900000));
+  } while (demoPickupCredentials.has(code));
+  return code;
 }
 
 // Mirrors markGroupBuyActivityReadyForPickup()'s { status, credentials } shape. `orders`/
 // `groupBuyActivity` are passed in (not imported) since they live in AppStateProvider's React state,
 // not this module's own fake data.
 export function createDemoPickupReadyResult(orders, groupBuyActivity, orderId) {
+  demoActivityCapturedOrderIds.set(groupBuyActivity.id, new Set(orders
+    .filter((order) => order.groupBuyActivityId === groupBuyActivity.id && order.paymentStatus === "captured" && order.status !== "cancelled")
+    .map((order) => order.id)));
   const targetOrders = orderId
-    ? orders.filter((order) => order.id === orderId)
-    : orders.filter((order) => order.groupBuyActivityId === groupBuyActivity.id && order.pickupStatus !== "ready");
+    ? orders.filter((order) => order.id === orderId && order.groupBuyActivityId === groupBuyActivity.id && order.paymentStatus === "captured" && order.pickupStatus === "not_ready")
+    : orders.filter((order) => order.groupBuyActivityId === groupBuyActivity.id && order.paymentStatus === "captured" && order.pickupStatus === "not_ready");
   const credentials = targetOrders.map((order) => {
     const code = createDemoPickupCode();
     demoPickupCredentials.set(code, { orderId: order.id, orderSnapshot: order, groupBuyActivity, status: "active" });
@@ -94,7 +102,7 @@ export function createDemoPickupReadyResult(orders, groupBuyActivity, orderId) {
   return { status: "ready_for_pickup", credentials };
 }
 
-// Same flat shape lookupPickupCredential() returns (the credential's own fields at top level).
+// The live lookup endpoint wraps the credential in { credential }.
 export function lookupDemoPickupCredential(code) {
   const entry = demoPickupCredentials.get(code);
   if (!entry) {
@@ -103,14 +111,16 @@ export function lookupDemoPickupCredential(code) {
     throw error;
   }
   const { orderSnapshot, groupBuyActivity, status } = entry;
-  return {
-    customerDisplayName: "展示用顧客",
+  return { credential: {
+    orderId: entry.orderId,
+    pickupCode: code,
+    customerDisplayName: orderSnapshot.customerDisplayName || orderSnapshot.customerId || "顧客",
     activity: { id: groupBuyActivity.id, title: groupBuyActivity.title },
-    totalCups: orderSnapshot.quantity,
-    finalAmount: orderSnapshot.subtotal,
+    totalCups: orderSnapshot.quantity ?? (orderSnapshot.items ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
+    finalAmount: orderSnapshot.captureAmount ?? orderSnapshot.finalAmount ?? orderSnapshot.subtotal,
     items: orderSnapshot.items ?? [],
     status
-  };
+  } };
 }
 
 // Same { credential, activityCompleted } shape redeemPickupCredential() returns.
@@ -134,6 +144,11 @@ export function redeemDemoPickupCredential(code) {
       pickupStatus: "picked_up",
       activity: { id: entry.groupBuyActivity.id }
     },
-    activityCompleted: false
+    activityCompleted: [...(demoActivityCapturedOrderIds.get(entry.groupBuyActivity.id) ?? [])]
+      .every((orderId) => [...demoPickupCredentials.values()].some((credential) => (
+        credential.groupBuyActivity.id === entry.groupBuyActivity.id
+        && credential.orderId === orderId
+        && credential.status === "redeemed"
+      )))
   };
 }

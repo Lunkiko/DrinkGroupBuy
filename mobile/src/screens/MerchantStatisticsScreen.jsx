@@ -1,15 +1,13 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { StyleSheet, Text, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { maxFontSizeMultiplier, radii, spacing, typeScale } from "../theme/tokens";
-import { useTheme, useThemedStyles } from "../theme/ThemeContext";
+import { useThemedStyles } from "../theme/ThemeContext";
 import { getMerchantStoreStatistics } from "../utils/apiClient";
-import { formatCurrency } from "../utils/calculations";
 import { formatQualifiedRate, normalizeMerchantStatistics } from "../utils/merchantStatistics";
 
 // useFocusEffect (not useEffect): the screen stays mounted in its stack, so a plain effect would
@@ -43,10 +41,12 @@ function useMerchantStatistics(storeId) {
 }
 
 export function MerchantStatisticsScreen({ selectedMerchantStoreId }) {
+  const styles = useThemedStyles(makeStyles);
   const { status, statistics, retry } = useMerchantStatistics(selectedMerchantStoreId);
 
   return (
-    <MobileScreen title="分析">
+    <MobileScreen title="">
+      <Text accessibilityRole="header" style={styles.pageTitle}>分析</Text>
       {!selectedMerchantStoreId ? (
         <EmptyPanel>找不到目前的店家資料，請重新登入。</EmptyPanel>
       ) : (
@@ -58,6 +58,7 @@ export function MerchantStatisticsScreen({ selectedMerchantStoreId }) {
 
 function StatisticsBody({ status, statistics, onRetry }) {
   const styles = useThemedStyles(makeStyles);
+  const [explanationOpen, setExplanationOpen] = useState(false);
 
   if (status === "loading") return <EmptyPanel>正在統計店家數據…</EmptyPanel>;
 
@@ -81,14 +82,15 @@ function StatisticsBody({ status, statistics, onRetry }) {
     <>
       <Section title="營收與訂單">
         <View style={styles.grid}>
-          <StatCard label="累計實收" value={formatCurrency(statistics.totalRevenue)} />
-          <StatCard label="成交訂單" value={`${statistics.orderCount} 筆`} />
-          <StatCard label="折扣讓利" value={formatCurrency(statistics.discountGivenTotal)} />
+          <StatCard label="累計實收" value={formatNumber(statistics.totalRevenue)} unit="元" />
+          <StatCard label="成交訂單" value={formatNumber(statistics.orderCount)} unit="筆" accent />
+          <StatCard label="折扣讓利" value={formatNumber(statistics.discountGivenTotal)} unit="元" />
           <StatCard
-            label="成團率"
+            label="成團率 ⓘ"
             value={formatQualifiedRate(statistics.qualifiedRate)}
+            accent
             hint={statistics.settledActivityCount > 0
-              ? `${statistics.qualifiedActivityCount} / ${statistics.settledActivityCount} 場達到優惠門檻`
+              ? `${statistics.qualifiedActivityCount} / ${statistics.settledActivityCount} 場`
               : null}
           />
         </View>
@@ -99,7 +101,7 @@ function StatisticsBody({ status, statistics, onRetry }) {
         weeklyTrendUnavailable={statistics.weeklyTrendUnavailable}
       />
 
-      <Section title="熱賣飲品 前三名">
+      <Section title="熱銷飲品 TOP 3" headerRight={<Text style={styles.listCaption}>累計銷量</Text>}>
         {statistics.topDrinks.length === 0 ? (
           <EmptyPanel>還沒有已成交的飲品。</EmptyPanel>
         ) : (
@@ -115,44 +117,36 @@ function StatisticsBody({ status, statistics, onRetry }) {
         )}
       </Section>
 
-      <Text style={styles.note}>
-        只計算已請款、未取消的訂單：全額退款的不列入，部分退款會從累計實收扣掉；逾期未取的仍計入（顧客已付款且不退）。
-        「折扣讓利」是這些訂單的原價減實收。成團率＝達到優惠門檻的團購 ÷ 已結算的團購，進行中與店家取消的不列入。
-      </Text>
+      <Text style={styles.note}>統計以已請款、未取消的訂單為準。</Text>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: explanationOpen }} onPress={() => setExplanationOpen((open) => !open)} style={styles.explanationButton}><Text style={styles.explanationIcon}>ⓘ</Text><Text style={styles.explanationLabel}>統計說明</Text><Text style={styles.explanationChevron}>{explanationOpen ? "⌃" : "⌄"}</Text></Pressable>
+      {explanationOpen ? <Text style={styles.explanationText}>全額退款不列入統計；部分退款會從累計實收扣除。逾期未取但已付款的訂單仍列入。折扣讓利為原價減實收；成團率為達到優惠門檻的團購占已結算團購的比例，進行中與店家取消的團購不列入。</Text> : null}
     </>
   );
 }
 
-function StatCard({ label, value, hint }) {
+function StatCard({ label, value, unit, hint, accent = false }) {
   const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.card}>
       <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.cardLabel}>{label}</Text>
-      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.cardValue}>{value}</Text>
+      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} numberOfLines={1} style={[styles.cardValue, accent && styles.cardValueAccent]}>{value}{unit ? <Text style={styles.cardUnit}> {unit}</Text> : null}</Text>
       {hint ? <Text style={styles.cardHint}>{hint}</Text> : null}
     </View>
   );
 }
 
-// The chart's columns are narrow (13 weeks side by side), so formatCurrency's full "$14529" gets
-// cut down to "$..." by the value Text's numberOfLines={1} -- it simply doesn't fit. Dropping the
-// "$" (the "營收" sub-label above the chart already establishes these are money) and rounding to
-// the nearest thousand keeps the label as short as the order-count numbers next to it, which do fit.
-// Also used to format the y-axis tick values (computeNiceAxisStep below already rounds those to
-// clean numbers, so "27000" reads as "27k" the same way a bar's own value does).
-function formatRevenueCompact(amount) {
-  return amount >= 1000 ? `${Math.round(amount / 1000)}k` : `${amount}`;
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-TW").format(value);
 }
 
 const CHART_HEIGHT = 120;
 const MIN_BAR_HEIGHT = 3;
-const Y_AXIS_WIDTH = 34;
-// 4 steps above 0 => 5 gridlines/labels (0, step, 2*step, 3*step, 4*step), matching the reference
-// chart's "0 / 5875 / 11750 / 17625 / 23500" style axis.
-const Y_AXIS_STEPS = 4;
+const Y_AXIS_WIDTH = 42;
+// Three intervals give the chart four readable axis labels, including zero.
+const Y_AXIS_STEPS = 3;
 
 // Rounds maxValue/Y_AXIS_STEPS up to a "nice" 1/2/5 * 10^n number, so the axis reads like a real
-// chart's 0/5k/10k/15k/20k instead of an arbitrary fraction of whatever this week's max happens to
+// chart's 0/20/40/60 instead of an arbitrary fraction of whatever this week's max happens to
 // be. Always rounds UP (never down), so axisStep * Y_AXIS_STEPS is guaranteed >= maxValue.
 function computeNiceAxisStep(maxValue) {
   const rawStep = maxValue / Y_AXIS_STEPS;
@@ -162,15 +156,11 @@ function computeNiceAxisStep(maxValue) {
   return niceNormalized * magnitude;
 }
 
-// A gradient-filled bar chart with a y-axis scale and gridlines (mirrors the "0/5875/11750/17625/
-// 23500"-style reference chart the store owner asked to match), replacing the flat single-colour
-// bars and the earlier line-chart attempt neither of which had an axis scale. A week with an actual
-// 0 gets no bar at all (height 0, no floor); a non-zero value keeps a small floor so it doesn't
-// disappear next to a much taller neighbour. `valueKey`/`formatValue` let the same chart plot either
-// orderCount or revenue off the same weeklyTrend rows (see WeeklyTrendSection below).
+// One chart plots either order count or revenue from the same weekly rows. A zero week has no bar;
+// a non-zero week keeps a small floor so it remains visible beside taller weeks.
 function WeeklyTrendChart({ weeklyTrend, valueKey, formatValue }) {
   const styles = useThemedStyles(makeStyles);
-  const { colors } = useTheme();
+  const [selectedWeek, setSelectedWeek] = useState(Math.floor(weeklyTrend.length / 2));
   const maxValue = Math.max(1, ...weeklyTrend.map((week) => week[valueKey]));
   const axisStep = computeNiceAxisStep(maxValue);
   const axisMax = axisStep * Y_AXIS_STEPS;
@@ -195,33 +185,24 @@ function WeeklyTrendChart({ weeklyTrend, valueKey, formatValue }) {
               <View key={tick} style={styles.gridLine} />
             ))}
           </View>
-          {weeklyTrend.map((week) => {
+          {weeklyTrend.map((week, index) => {
             const value = week[valueKey];
             const barHeight = value === 0 ? 0 : Math.max(MIN_BAR_HEIGHT, (value / axisMax) * CHART_HEIGHT);
             return (
-              <View key={week.weekStart} style={styles.chartCol}>
-                <Text
-                  maxFontSizeMultiplier={maxFontSizeMultiplier}
-                  style={styles.chartValue}
-                  numberOfLines={1}
-                >
-                  {formatValue(value)}
-                </Text>
-                <LinearGradient
-                  colors={[colors.lineDecor, colors.accent]}
-                  style={[styles.chartBar, { height: barHeight }]}
-                />
-              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel={`${formatWeekLabel(week.weekStart)}：${formatValue(value)}`} key={week.weekStart} onPress={() => setSelectedWeek(index)} style={[styles.chartCol, selectedWeek === index && styles.chartColSelected]}>
+                {selectedWeek === index ? <View style={[styles.chartTooltip, { bottom: barHeight + spacing.s8 }]}><Text numberOfLines={1} style={styles.chartTooltipText}>{formatWeekLabel(week.weekStart)}　{formatNumber(value)}{valueKey === "revenue" ? " 元" : " 筆"}</Text></View> : null}
+                <View style={[styles.chartBar, { height: barHeight }]} />
+              </Pressable>
             );
           })}
         </View>
       </View>
       <View style={styles.xAxisRow}>
         <View style={styles.yAxisSpacer} />
-        {weeklyTrend.map((week) => (
+        {weeklyTrend.map((week, index) => (
           <View key={week.weekStart} style={styles.xAxisLabelCol}>
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.xAxisLabel} numberOfLines={1}>
-              {formatWeekLabel(week.weekStart)}
+              {index % 2 === 0 || index === weeklyTrend.length - 1 ? formatWeekLabel(week.weekStart) : ""}
             </Text>
           </View>
         ))}
@@ -235,19 +216,23 @@ function WeeklyTrendChart({ weeklyTrend, valueKey, formatValue }) {
 // same "暫時無法載入" notice twice for what is really one failed request.
 function WeeklyTrendSection({ weeklyTrend, weeklyTrendUnavailable }) {
   const styles = useThemedStyles(makeStyles);
+  const [metric, setMetric] = useState("orderCount");
+  const [weeks, setWeeks] = useState(9);
+  const [periodOpen, setPeriodOpen] = useState(false);
+  const visibleTrend = weeklyTrend.slice(-weeks);
   return (
-    <Section title="近期訂單與營收趨勢（近 2 個月）">
+    <Section title="訂單與營收趨勢" headerRight={<Pressable accessibilityRole="button" accessibilityState={{ expanded: periodOpen }} onPress={() => setPeriodOpen((open) => !open)} style={styles.periodButton}><Text style={styles.periodText}>{weeks === 9 ? "近 2 個月" : "近 1 個月"} ⌄</Text></Pressable>}>
+      {periodOpen ? <View style={styles.periodOptions}>{[{ label: "近 1 個月", value: 4 }, { label: "近 2 個月", value: 9 }].map((option) => <Pressable key={option.value} accessibilityRole="button" onPress={() => { setWeeks(option.value); setPeriodOpen(false); }} style={styles.periodOption}><Text style={styles.periodText}>{option.label}</Text></Pressable>)}</View> : null}
       {weeklyTrendUnavailable ? (
         <Notice tone="danger" message="暫時無法載入近期趨勢，請稍後再試。" />
       ) : weeklyTrend.length === 0 ? (
         <EmptyPanel>近期沒有訂單資料。</EmptyPanel>
       ) : (
-        <>
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chartSubLabel}>訂單數</Text>
-          <WeeklyTrendChart weeklyTrend={weeklyTrend} valueKey="orderCount" formatValue={String} />
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chartSubLabel}>營收</Text>
-          <WeeklyTrendChart weeklyTrend={weeklyTrend} valueKey="revenue" formatValue={formatRevenueCompact} />
-        </>
+        <View style={styles.chartCard}>
+          <View style={styles.metricTabs}>{[{ key: "orderCount", label: "訂單數" }, { key: "revenue", label: "實收金額" }].map((option) => <Pressable key={option.key} accessibilityRole="tab" accessibilityState={{ selected: metric === option.key }} onPress={() => setMetric(option.key)} style={[styles.metricTab, metric === option.key && styles.metricTabActive]}><Text style={[styles.metricTabText, metric === option.key && styles.metricTabTextActive]}>{option.label}</Text></Pressable>)}</View>
+          <Text style={styles.chartSubLabel}>{metric === "orderCount" ? "訂單數（筆）" : "實收金額（元）"}</Text>
+          <WeeklyTrendChart key={`${metric}-${weeks}`} weeklyTrend={visibleTrend} valueKey={metric} formatValue={metric === "orderCount" ? String : formatNumber} />
+        </View>
       )}
     </Section>
   );
@@ -261,46 +246,52 @@ function formatWeekLabel(weekStart) {
 }
 
 const makeStyles = (colors) => StyleSheet.create({
+  pageTitle: { ...typeScale.screenTitle, color: colors.text, textAlign: "center", marginBottom: spacing.s8 },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.s12
+    gap: spacing.s8
   },
   card: {
     flexGrow: 1,
     flexBasis: "45%",
-    gap: spacing.s4,
+    minHeight: 104,
+    gap: spacing.s8,
     padding: spacing.s16,
-    borderRadius: radii.md,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.lineDecor,
     backgroundColor: colors.recess
   },
   cardLabel: {
-    ...typeScale.label,
+    ...typeScale.body,
     color: colors.textSecondary
   },
   cardValue: {
     ...typeScale.amount,
     color: colors.text
   },
+  cardValueAccent: { color: colors.accentInk },
+  cardUnit: { ...typeScale.body, color: colors.text },
   cardHint: {
-    ...typeScale.caption,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
-  drinkList: {
-    gap: spacing.s8
-  },
+  listCaption: { ...typeScale.bodyDense, color: colors.textSecondary },
+  drinkList: { borderWidth: 1, borderColor: colors.lineDecor, borderRadius: radii.sm, overflow: "hidden" },
   drinkRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.s12,
-    padding: spacing.s12,
-    borderRadius: radii.md,
-    backgroundColor: colors.recess
+    minHeight: 58,
+    paddingHorizontal: spacing.s16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lineRow
   },
   drinkRank: {
-    ...typeScale.sectionTitle,
-    minWidth: 20,
-    color: colors.text
+    ...typeScale.price,
+    minWidth: 24,
+    color: colors.accentInk
   },
   drinkName: {
     ...typeScale.body,
@@ -315,6 +306,16 @@ const makeStyles = (colors) => StyleSheet.create({
     flexDirection: "row",
     gap: spacing.s8
   },
+  periodButton: { borderWidth: 1, borderColor: colors.lineInput, borderRadius: radii.xs, minHeight: 40, paddingHorizontal: spacing.s12, justifyContent: "center" },
+  periodText: { ...typeScale.body, color: colors.text },
+  periodOptions: { alignSelf: "flex-end", borderWidth: 1, borderColor: colors.lineInput, borderRadius: radii.xs, backgroundColor: colors.page, minWidth: 126 },
+  periodOption: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.s12, borderBottomWidth: 1, borderBottomColor: colors.lineRow },
+  chartCard: { borderWidth: 1, borderColor: colors.lineDecor, borderRadius: radii.sm, padding: spacing.s12, gap: spacing.s16 },
+  metricTabs: { flexDirection: "row", alignSelf: "flex-start", borderWidth: 1, borderColor: colors.lineRow, borderRadius: radii.xs, overflow: "hidden" },
+  metricTab: { minWidth: 104, minHeight: 40, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.s12 },
+  metricTabActive: { backgroundColor: colors.recess },
+  metricTabText: { ...typeScale.body, color: colors.textSecondary },
+  metricTabTextActive: { ...typeScale.button, color: colors.accentInk },
   yAxisLabels: {
     width: Y_AXIS_WIDTH,
     height: CHART_HEIGHT,
@@ -344,18 +345,16 @@ const makeStyles = (colors) => StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "flex-end",
-    height: "100%"
+    height: "100%",
+    minWidth: 0
   },
+  chartColSelected: { zIndex: 2 },
   chartBar: {
-    width: "100%",
-    borderTopLeftRadius: radii.xs,
-    borderTopRightRadius: radii.xs
+    width: "78%",
+    backgroundColor: colors.accent
   },
-  chartValue: {
-    ...typeScale.caption,
-    color: colors.textSecondary,
-    marginBottom: spacing.s4
-  },
+  chartTooltip: { position: "absolute", width: 105, borderRadius: radii.xs, paddingHorizontal: spacing.s4, paddingVertical: spacing.s4, alignItems: "center", backgroundColor: colors.text },
+  chartTooltipText: { ...typeScale.caption, color: colors.onDark },
   xAxisRow: {
     flexDirection: "row",
     gap: spacing.s4,
@@ -373,11 +372,16 @@ const makeStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary
   },
   chartSubLabel: {
-    ...typeScale.caption,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
   note: {
-    ...typeScale.caption,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
-  }
+  },
+  explanationButton: { flexDirection: "row", alignItems: "center", gap: spacing.s12, minHeight: 52, borderWidth: 1, borderColor: colors.lineDecor, borderRadius: radii.sm, paddingHorizontal: spacing.s16 },
+  explanationIcon: { ...typeScale.price, color: colors.textSecondary },
+  explanationLabel: { ...typeScale.button, color: colors.text, flex: 1 },
+  explanationChevron: { ...typeScale.price, color: colors.textSecondary },
+  explanationText: { ...typeScale.bodyDense, color: colors.textSecondary }
 });

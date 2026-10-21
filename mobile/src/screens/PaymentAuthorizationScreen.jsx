@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { Card } from "../components/Card";
-import { CheckRow } from "../components/CheckRow";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
+import { OrderAmountSummary } from "../components/OrderAmountSummary";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { StatusBadge } from "../components/StatusBadge";
 import { ValueRow } from "../components/ValueRow";
@@ -12,7 +12,6 @@ import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../them
 import { formatCurrency } from "../utils/calculations";
 import { getManualRepaymentStateInfo } from "../utils/manualRepayment";
 import {
-  getAuthMode,
   getPickupOverdueRule,
   requestLinePayAuthorization,
   requestLinePayRepayment
@@ -31,7 +30,6 @@ const PAYMENT_SYNC_FINISHED_STATUSES = new Set([
 
 export function PaymentAuthorizationScreen({ navigation, route, appState, actions, selectedCustomerId }) {
   const styles = useThemedStyles(makeStyles);
-  const isDevAuthMode = getAuthMode() === "dev";
   const [linePayStatus, setLinePayStatus] = useState("idle");
   const [linePayMessage, setLinePayMessage] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -39,7 +37,6 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
   const [pickupRule, setPickupRule] = useState(null);
   const [pickupRuleStatus, setPickupRuleStatus] = useState("idle");
   const [pickupRuleMessage, setPickupRuleMessage] = useState("");
-  const [pickupRuleAccepted, setPickupRuleAccepted] = useState(false);
   const [pickupRuleReloadKey, setPickupRuleReloadKey] = useState(0);
   const [pickupRuleContentExpanded, setPickupRuleContentExpanded] = useState(false);
   const pollIntervalRef = useRef(null);
@@ -59,17 +56,26 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     && payment.paymentStatus !== "captured"
     && payment.status !== "captured"
   );
+  const paymentCompleted = payment?.paymentStatus === "authorized"
+    || payment?.status === "authorized"
+    || payment?.paymentStatus === "captured"
+    || payment?.status === "captured";
+
+  useEffect(() => {
+    const returnedFromLinePay = ["authorized", "captured"].includes(route.params?.linePayResultStatus);
+    if (!paymentCompleted || (!returnedFromLinePay && linePayStatus !== "ready")) return;
+    navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: payment.orderId } });
+  }, [paymentCompleted, payment?.orderId, route.params?.linePayResultStatus, linePayStatus, navigation]);
 
   useEffect(() => () => {
     stopLinePaySyncPolling({ pollIntervalRef, pollTimeoutRef });
   }, []);
 
   useEffect(() => {
-    if (!needsPickupRuleConsent) return undefined;
+    if (!payment) return undefined;
     let active = true;
     setPickupRuleStatus("loading");
     setPickupRuleMessage("");
-    setPickupRuleAccepted(false);
 
     getPickupOverdueRule()
       .then((rule) => {
@@ -87,7 +93,7 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     return () => {
       active = false;
     };
-  }, [needsPickupRuleConsent, payment?.orderId, pickupRuleReloadKey]);
+  }, [payment?.orderId, pickupRuleReloadKey]);
 
   useEffect(() => {
     if (!payment?.orderId) return undefined;
@@ -143,18 +149,26 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     || order?.paymentStatus === "failed";
   const manualRepayment = order?.manualRepayment ?? null;
   const repaymentState = isManualRepayment ? getManualRepaymentStateInfo(manualRepayment) : null;
-  const canCapture = payment.discountStatus === "qualified";
   const deepLinkResultMessage = getDeepLinkResultMessage(route.params);
+  const displayedAmount = isManualRepayment
+    ? (manualRepayment?.finalAmount ?? payment.finalAmount ?? payment.originalAmount)
+    : isCaptured ? (payment.captureAmount ?? payment.finalAmount ?? payment.originalAmount) : payment.originalAmount;
+  const settledDiscount = isManualRepayment
+    ? Math.max(0, payment.originalAmount - displayedAmount)
+    : isCaptured ? Math.max(0, payment.originalAmount - (payment.captureAmount ?? payment.originalAmount)) : 0;
 
   return (
     <MobileScreen
-      title={isManualRepayment ? "重新付款" : "付款預授權"}
+      title={isManualRepayment ? "重新付款" : "確認付款"}
       onBack={() => navigation.goBack()}
     >
-      <Section title={isManualRepayment ? "付款狀態" : "預授權狀態"}>
-        <Card>
-          <StatusBadge owner="payment" value={payment.status} />
-          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.amount}>{formatCurrency(isManualRepayment ? (manualRepayment?.finalAmount ?? payment.finalAmount ?? payment.originalAmount) : payment.originalAmount)}</Text>
+      <View>
+        <Card style={styles.statusCard}>
+          {needsPickupRuleConsent ? (
+            <View style={styles.pendingBadge}><Text style={styles.pendingBadgeText}>!  待付款</Text></View>
+          ) : <StatusBadge owner="payment" value={payment.status} />}
+          <Text style={styles.meta}>應付金額</Text>
+          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.amount}>{formatCurrency(displayedAmount)}</Text>
           {isManualRepayment ? (
             <View style={styles.metaGroup}>
               <Text style={styles.meta}>{repaymentState.statusText}</Text>
@@ -164,30 +178,36 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
             </View>
           ) : (
             <View style={styles.metaGroup}>
-              <Text style={styles.meta}>目前僅預授權，尚未正式扣款。</Text>
-              <Text style={styles.meta}>達標後將依優惠價請款。</Text>
+              <Text style={styles.meta}>{needsPickupRuleConsent
+                ? "請確認金額與取餐規則後付款。團購截止後才依實際優惠金額請款。"
+                : "訂單已完成預授權，團購截止後才依實際優惠金額請款。"}</Text>
             </View>
           )}
         </Card>
-      </Section>
+      </View>
 
-      <Section title="授權金額">
-        <Card compact>
-          <Text style={styles.providerName}>LINE Pay</Text>
-          <Text style={styles.providerMeta}>付款對象：{payment.recipientName}</Text>
+      <Section title="付款方式">
+        <Card compact style={styles.providerCard}>
+          <Text accessibilityLabel="LINE Pay" style={styles.providerName}>LINE Pay</Text>
+          <Text style={styles.providerMeta}>目前僅提供 LINE Pay 付款。</Text>
         </Card>
-        <View style={styles.amountRows}>
-          <AmountRow label="訂單原價" value={payment.originalAmount} />
-          <AmountRow emphasis label="已授權金額" value={payment.authorizedAmount} />
-        </View>
       </Section>
 
-      {needsPickupRuleConsent ? (
-        <Section title="付款前確認">
-          {pickupRuleStatus === "loading" ? (
+      <Section title="金額明細">
+        <OrderAmountSummary
+          originalAmount={payment.originalAmount}
+          discountAmount={settledDiscount}
+          totalAmount={isCaptured ? (payment.captureAmount ?? displayedAmount) : displayedAmount}
+          totalLabel={isCaptured ? "實際請款金額" : "應付金額"}
+        />
+      </Section>
+
+      {!isManualRepayment ? (
+        <View style={styles.ruleSection}>
+          {needsPickupRuleConsent && pickupRuleStatus === "loading" ? (
             <EmptyPanel>正在載入取餐與逾期未取規則...</EmptyPanel>
           ) : null}
-          {pickupRuleStatus === "error" ? (
+          {needsPickupRuleConsent && pickupRuleStatus === "error" ? (
             <Notice accessibilityRole="alert" tone="danger" message="規則載入失敗，為避免未經同意付款，目前不能建立預授權。">
               {pickupRuleMessage ? <Text style={styles.noticeDetail}>{pickupRuleMessage}</Text> : null}
               <PrimaryButton
@@ -199,34 +219,25 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
             </Notice>
           ) : null}
           {pickupRuleStatus === "ready" && pickupRule ? (
-            <Card compact style={pickupRuleAccepted && styles.consentAccepted}>
-              <CheckRow checked={pickupRuleAccepted} onToggle={() => setPickupRuleAccepted((value) => !value)}>
-                {`我已閱讀並同意「${pickupRule.title}」`}
-              </CheckRow>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={pickupRuleContentExpanded ? "收合詳細資訊" : "展開詳細資訊"}
-                onPress={() => setPickupRuleContentExpanded((value) => !value)}
-                style={({ pressed }) => [styles.ruleConsentToggleRow, pressed && styles.pressed]}
-              >
-                <Text style={styles.ruleConsentToggleText}>詳細資訊</Text>
-                <View
-                  importantForAccessibility="no-hide-descendants"
-                  style={[styles.chevron, pickupRuleContentExpanded && styles.chevronUp]}
-                />
+            <View style={styles.ruleCopy}>
+              <Text style={styles.ruleCopyText}>付款前請閱讀</Text>
+              <Pressable accessibilityRole="link" accessibilityLabel="閱讀取餐規則" onPress={() => setPickupRuleContentExpanded((value) => !value)} style={styles.ruleLinkTarget}>
+                <Text style={styles.ruleConsentToggleText}>取餐規則</Text>
               </Pressable>
+              <Text style={styles.ruleCopyText}>，點擊確認付款即代表同意。</Text>
               {pickupRuleContentExpanded ? (
                 <View style={styles.ruleConsentTextGroup}>
+                  <Text style={styles.ruleConsentContent}>{pickupRule.title}</Text>
                   <Text style={styles.ruleConsentContent}>{pickupRule.content}</Text>
                   <Text style={styles.ruleVersion}>規則版本：{pickupRule.ruleVersion}</Text>
                 </View>
               ) : null}
-            </Card>
+            </View>
           ) : null}
-        </Section>
+        </View>
       ) : null}
 
-      <Section title="LINE Pay">
+      <View style={styles.paymentActions}>
         {linePayMessage ? (
           <MessageNotice isError={linePayStatus === "error"} message={linePayMessage} />
         ) : null}
@@ -235,18 +246,6 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
         ) : null}
         {!isAuthorized && !isCaptured ? (
           <>
-            <View style={styles.metaGroup}>
-              <Text style={styles.meta}>
-                {isManualRepayment
-                  ? "此按鈕會開啟 LINE Pay，並以結算後金額直接付款。"
-                  : "點擊後會開啟 LINE Pay 付款頁，完成授權即完成加入團購的付款程序。"}
-              </Text>
-              <Text style={styles.meta}>
-                {isManualRepayment
-                  ? "付款成功後會自動更新訂單並加入店家製作清單。"
-                  : "完成後畫面會自動更新付款狀態。"}
-              </Text>
-            </View>
             <PrimaryButton
               label={repaymentState?.disabled
                 ? repaymentState.disabledLabel
@@ -254,16 +253,16 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
                   ? "正在建立付款請求..."
                   : isManualRepayment
                     ? "前往 LINE Pay 重新付款"
-                    : "前往 LINE Pay 預授權"}
+                    : "確認付款"}
               disabled={Boolean(
                 repaymentState?.disabled
-                || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted))
+                || (needsPickupRuleConsent && pickupRuleStatus !== "ready")
               )}
               onPress={() => {
                 if (
                   linePayStatus === "loading"
                   || repaymentState?.disabled
-                  || (needsPickupRuleConsent && (pickupRuleStatus !== "ready" || !pickupRuleAccepted))
+                  || (needsPickupRuleConsent && pickupRuleStatus !== "ready")
                 ) return;
                 const startPayment = isManualRepayment ? startLinePayRepayment : startPaymentAuthorization;
                 startPayment({
@@ -275,7 +274,7 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
                     items: route.params?.revisionItems
                   },
                   ruleConsent: needsPickupRuleConsent && pickupRule ? {
-                    accepted: pickupRuleAccepted,
+                    accepted: true,
                     ruleType: pickupRule.ruleType,
                     ruleVersion: pickupRule.ruleVersion
                   } : null,
@@ -296,7 +295,7 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
             ) : null}
           </>
         ) : null}
-      </Section>
+      </View>
 
       {isCaptured ? (
         <Section title="請款結果">
@@ -308,26 +307,6 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
         </Section>
       ) : null}
 
-      {/* Real capture only ever happens via the backend's automatic deadline settlement -- a
-          customer must never be able to trigger it themselves. captureQualifiedPayment is a
-          local-only prototype mock (no real backend call), kept as a dev-testing convenience;
-          gated so it can't render or fire outside dev auth mode. */}
-      <View style={styles.actions}>
-        {!isManualRepayment && (isAuthorized || isCaptured) ? (
-          <PrimaryButton
-            label={isCaptured
-              ? "已完成優惠價請款"
-              : isDevAuthMode && canCapture
-                ? "模擬達標後部分請款"
-                : "等待達標後請款"}
-            onPress={() => {
-              if (isCaptured || !isDevAuthMode || !canCapture) return;
-              actions.captureQualifiedPayment(payment.orderId, payment.finalAmount ?? Math.round(payment.originalAmount * 0.83));
-            }}
-          />
-        ) : null}
-        <PrimaryButton label="前往取貨資訊" variant="secondary" onPress={() => navigation.push("pickupInfo", { orderId: payment.orderId })} />
-      </View>
     </MobileScreen>
   );
 }
@@ -697,6 +676,15 @@ function MessageNotice({ isError, message }) {
 }
 
 const makeStyles = (colors, tones) => StyleSheet.create({
+  statusCard: { gap: spacing.s12 },
+  pendingBadge: {
+    alignSelf: "flex-start",
+    borderRadius: radii.pill,
+    backgroundColor: tones.warning.bg,
+    paddingHorizontal: spacing.s16,
+    paddingVertical: spacing.s8
+  },
+  pendingBadgeText: { ...typeScale.bodyDense, fontWeight: "700", color: tones.warning.fg },
   amount: {
     ...typeScale.amount,
     color: colors.text
@@ -711,17 +699,21 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   },
   providerName: {
     ...typeScale.price,
-    color: colors.text
+    color: colors.linePayInk
   },
+  providerCard: { flexDirection: "row", alignItems: "center", gap: spacing.s12, padding: spacing.s16 },
   providerMeta: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
+    flex: 1,
     color: colors.textSecondary
   },
+  ruleSection: { gap: spacing.s12 },
+  ruleCopy: { flexDirection: "row", justifyContent: "center", alignItems: "center", flexWrap: "wrap" },
+  ruleCopyText: { ...typeScale.body, color: colors.textSecondary },
+  ruleLinkTarget: { minHeight: sizes.tap, justifyContent: "center" },
+  paymentActions: { gap: spacing.s12 },
   amountRows: {
     gap: spacing.s8
-  },
-  consentAccepted: {
-    borderColor: colors.accent
   },
   noticeDetail: {
     ...typeScale.bodyDense,
@@ -730,35 +722,14 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   retry: {
     alignSelf: "flex-start"
   },
-  ruleConsentToggleRow: {
-    minHeight: sizes.tap,
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.s8,
-    // Lines the link up under the label text: the checkbox (24) plus the gap (12) of CheckRow.
-    marginLeft: spacing.s24 + spacing.s12
-  },
   ruleConsentToggleText: {
-    ...typeScale.bodyDense,
+    ...typeScale.body,
     fontWeight: typeScale.label.fontWeight,
-    color: colors.accentInk
-  },
-  // A drawn chevron: two borders of a square, rotated. The margin re-centres the visible "v".
-  chevron: {
-    width: 10,
-    height: 10,
-    marginTop: -spacing.s4,
-    borderRightWidth: sizes.stroke,
-    borderBottomWidth: sizes.stroke,
-    borderColor: colors.accentInk,
-    transform: [{ rotate: "45deg" }]
-  },
-  chevronUp: {
-    marginTop: spacing.s4,
-    transform: [{ rotate: "-135deg" }]
+    color: colors.accentInk,
+    textDecorationLine: "underline"
   },
   ruleConsentTextGroup: {
+    width: "100%",
     gap: spacing.s8,
     padding: spacing.s16,
     borderRadius: radii.sm,
@@ -771,9 +742,6 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   ruleVersion: {
     ...typeScale.caption,
     color: colors.textSecondary
-  },
-  actions: {
-    gap: spacing.s12
   },
   pressed: {
     opacity: 0.8

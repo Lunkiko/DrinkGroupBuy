@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Card } from "../components/Card";
+import { getMenuCategoryLabel, MenuCategoryTabs, MenuDrinkCard, MenuInfoBanner, MenuPhotoPlaceholder, MenuSectionHeading } from "../components/CustomerMenuParts";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { TonePill } from "../components/TonePill";
-import { maxFontSizeMultiplier, spacing, typeScale } from "../theme/tokens";
+import { spacing, typeScale } from "../theme/tokens";
 import { getStoreMenu } from "../utils/apiClient";
-import { formatCurrency } from "../utils/calculations";
 import { useThemedStyles } from "../theme/ThemeContext";
 
 const businessStatusLabels = {
@@ -30,6 +30,7 @@ export function StoreMenuScreen({ navigation, route }) {
   const [menu, setMenu] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [category, setCategory] = useState("all");
 
   useEffect(() => {
     let active = true;
@@ -52,6 +53,9 @@ export function StoreMenuScreen({ navigation, route }) {
 
   const store = menu?.store;
   const storeDrinks = menu?.menuItems || [];
+  const categories = [{ id: "all", label: "全部" }, ...[...new Set(storeDrinks.map((item) => item.category))]
+    .map((id) => ({ id, label: getMenuCategoryLabel(id) }))];
+  const displayedDrinks = category === "all" ? storeDrinks : storeDrinks.filter((item) => item.category === category);
 
   if (loading) {
     return (
@@ -78,91 +82,60 @@ export function StoreMenuScreen({ navigation, route }) {
   return (
     <MobileScreen
       title="店家菜單"
-      subtitle="目前沒有進行中的團購，可先查看店家飲品。"
       onBack={() => navigation.goBack()}
     >
-      <Section title="店家資訊">
-        <Card style={styles.storeCard}>
+      <Card style={styles.storeCard}>
+        <MenuPhotoPlaceholder logo />
+        <View style={styles.storeDetails}>
           <View style={styles.storeHeader}>
             <Text style={styles.storeName}>{store.name}</Text>
-            <TonePill
-              tone={businessStatusTones[store.businessStatus] ?? "neutral"}
-              label={businessStatusLabels[store.businessStatus] ?? store.businessStatus}
-            />
+            <TonePill tone={businessStatusTones[store.businessStatus] ?? "neutral"} label={businessStatusLabels[store.businessStatus] ?? store.businessStatus} />
           </View>
-          <Text style={styles.meta}>{store.address}</Text>
-          <Text style={styles.meta}>{store.phone}</Text>
-        </Card>
-      </Section>
+          {store.address ? <Text style={styles.meta}>●  {store.address}</Text> : null}
+          {store.phone ? <Text style={styles.meta}>☎  {store.phone}</Text> : null}
+        </View>
+      </Card>
 
-      <Section title="目前狀態">
-        <Notice
-          tone="neutral"
-          title="此店家目前沒有進行中的團購"
-          message="此畫面僅供瀏覽菜單，不會加入購物車，也不會建立訂單。"
-        />
-      </Section>
+      <MenuInfoBanner title="目前沒有進行中的團購" detail="菜單僅供瀏覽，無法加入購物車或建立訂單" />
 
-      <Section title="飲品菜單">
-        {storeDrinks.length > 0 ? (
-          storeDrinks.map((drink) => (
-            <Card compact key={drink.id}>
-              <View style={styles.drinkTopRow}>
-                <View style={styles.flex}>
-                  <Text style={styles.drinkName}>{drink.name}</Text>
-                  <Text style={styles.description}>{drink.description}</Text>
-                </View>
-                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.price}>{formatCurrency(drink.basePrice)}</Text>
-              </View>
-            </Card>
-          ))
-        ) : (
-          <EmptyPanel>此店家目前沒有上架飲品。</EmptyPanel>
-        )}
-      </Section>
+      <View style={styles.menuContent}>
+        <MenuSectionHeading title="飲品菜單" detail="僅供瀏覽" />
+        <MenuCategoryTabs categories={categories} selected={category} onSelect={setCategory} />
+        <View style={styles.drinkList}>
+          {displayedDrinks.length > 0
+            ? displayedDrinks.map((drink) => <MenuDrinkCard key={drink.id} drink={drink} />)
+            : <EmptyPanel>{storeDrinks.length ? "此分類目前沒有品項。" : "此店家目前沒有上架飲品。"}</EmptyPanel>}
+        </View>
+      </View>
     </MobileScreen>
   );
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  flex: {
-    flex: 1
-  },
   storeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s12,
+    padding: spacing.s12
+  },
+  storeDetails: {
+    flex: 1,
     gap: spacing.s4
   },
   storeHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.s12,
-    marginBottom: spacing.s4
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: spacing.s4
   },
   storeName: {
     ...typeScale.sectionTitle,
-    flex: 1,
     color: colors.text
   },
   meta: {
-    ...typeScale.body,
+    ...typeScale.bodyDense,
     color: colors.textSecondary
   },
-  drinkTopRow: {
-    flexDirection: "row",
-    gap: spacing.s12,
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: spacing.s4
-  },
-  drinkName: {
-    ...typeScale.button,
-    color: colors.text
-  },
-  description: {
-    ...typeScale.caption,
-    color: colors.textSecondary
-  },
-  price: {
-    ...typeScale.price,
-    color: colors.text
-  }
+  menuContent: { gap: spacing.s12 },
+  drinkList: { gap: spacing.s8 }
 });

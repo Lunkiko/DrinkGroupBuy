@@ -4,12 +4,12 @@ import { useThemedStyles } from "../theme/ThemeContext";
 
 // The page every screen sits in: an optional header row (back arrow, title, something on the right) above
 // scrolling content (docs/ui-style-guide.md).
-export function MobileScreen({ title, subtitle, children, onBack, backLabel = "返回", headerRight = null }) {
+export function MobileScreen({ title, subtitle, children, onBack, backLabel = "返回", headerRight = null, scrollRef = null }) {
   const styles = useThemedStyles(makeStyles);
   const hasHeader = Boolean(onBack || title || subtitle || headerRight);
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView ref={scrollRef} style={styles.screen} contentContainerStyle={styles.content}>
       {hasHeader ? (
         <View style={styles.header}>
           <View style={styles.titleRow}>
@@ -40,13 +40,16 @@ export function MobileScreen({ title, subtitle, children, onBack, backLabel = "�
   );
 }
 
-export function Section({ title, children }) {
+export function Section({ title, children, titleStyle, headerRight = null }) {
   const styles = useThemedStyles(makeStyles);
+  const titleNode = (
+    <Text accessibilityRole="header" style={[styles.sectionTitle, headerRight && styles.sectionHeaderTitle, titleStyle]}>
+      {title}
+    </Text>
+  );
   return (
     <View style={styles.section}>
-      <Text accessibilityRole="header" style={styles.sectionTitle}>
-        {title}
-      </Text>
+      {headerRight ? <View style={styles.sectionHeader}>{titleNode}{headerRight}</View> : titleNode}
       {children}
     </View>
   );
@@ -107,6 +110,15 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   section: {
     gap: spacing.s12
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.s8
+  },
+  sectionHeaderTitle: {
+    flex: 1
   },
   sectionTitle: {
     ...typeScale.sectionTitle,
