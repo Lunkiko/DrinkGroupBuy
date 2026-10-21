@@ -1,6 +1,6 @@
 # 系統架構
 
-最後更新：2026-09-12
+最後更新：2026-10-02（校正 Mobile 導覽架構、Expo SDK 版本、EAS Update、Google 登入真機驗證、展示環境排程等已過期段落，呼應 `docs/AI-project-overview.md` 第 17.1 節）
 
 ## 文件範圍
 
@@ -10,7 +10,7 @@
 
 ```text
 React Native / Expo Mobile
-  ├─ screen + custom navigation + local UI state
+  ├─ screen + react-navigation + AppStateProvider 全域 state
   └─ mobile/src/utils/apiClient.js
                   ↓ HTTP + bearer token
 backend/server.js (Node.js built-in HTTP)
@@ -27,7 +27,7 @@ Mobile 不直接連資料庫或付款 provider。Backend 是身份、價格、�
 
 ## Mobile
 
-- 入口是 `mobile/App.jsx`，載入 `mobile/src/navigation/AppNavigator.js`。沒有使用 React Navigation；`AppNavigator` 自行維護 stack、角色、選定門市、活動、訂單、付款與購物車 state，並以條件渲染 screen。
+- 入口是 `mobile/App.jsx`，渲染 `mobile/src/navigation/RootNavigator.jsx`（`AppNavigator` export）。**2026-09-23 起改用 `@react-navigation/native`（native-stack + bottom-tabs，另搭配 `react-native-screens`／`react-native-gesture-handler`）**，取代舊版手刻的 `AppNavigator.js`／`stack` 陣列導覽器（該檔案與 `ScreenTransition.jsx`／`slideTransition.js` 已一併刪除）。`RootNavigator` 依 `AppStateProvider` 的 `currentRole`／`showingRoleSelect` 狀態，在「角色選擇／商家申請」、`CustomerTabs`（4 個 bottom tab，各自掛獨立 stack）、`MerchantTabs`（同構）三者間切換；管理員在 Mobile App 完全沒有入口。角色、選定門市、活動、訂單、付款與購物車等全域 state 現在集中在 `mobile/src/state/AppStateProvider.jsx`（Context + `useState`/`useMemo`，非 Redux），不再由導覽器本身維護。
 - Screen 依顧客、店家與開發補救流程分布在 `mobile/src/screens/`；共用視覺元件在 `mobile/src/components/`。Platform-specific 地圖使用 `LiveMapScreen.native.jsx` 與 `LiveMapScreen.web.jsx`。
 - `mobile/src/utils/apiClient.js` 集中呼叫 Backend 並保存目前 bearer token。App 在登入、切換角色、回到前景及部分畫面操作時重新同步店家、活動或訂單。
 - 活動、店家與訂單逐步以 Backend 回應覆蓋畫面 state；購物車仍是 Mobile local state。Web 可由 `prototypeStorage.js` 存入 `localStorage`，這只是 prototype cache，不是跨裝置資料庫或最終 API contract。
@@ -67,7 +67,7 @@ Mobile 不直接連資料庫或付款 provider。Backend 是身份、價格、�
 
 ## 付款、結算與取餐
 
-- LINE Pay request／confirm／cancel、capture／void／refund 與重新付款由 `backend/payments/linePayService.js` 協調；provider 簽章與 secret 僅在 Backend。這是目前唯一的付款 provider（ECPay 備援方案已於 2026-08-27 完全移除，見 `docs/AI-security-review-log.md`）。
+- LINE Pay request／confirm／cancel、capture／void／refund 與重新付款由 `backend/payments/linePayService.js` 協調；provider 簽章與 secret 僅在 Backend。這是目前唯一的付款 provider（ECPay 備援方案已於 2026-08-27 完全移除，見 `docs/AI-security-review-log.md`）。**2026-10-21 補充**：這段描述的仍是目前程式碼（方案 A，單一平台 channel）；長期方向是每間商家各自的 LINE Pay channel、退款不經 provider（方案 B），尚未遷移，詳見 `docs/payment-rules-and-flow.md`「資金收付與平台收費」「退款」。
 - 訂單送出、revision、付款前規則同意、provider 操作、截止結算與退款都需要 Backend 權威金額、idempotency、transaction／row lock 或 operation lease，以及 status／audit 紀錄。
 - Provider redirect 不是唯一真相；Backend 以資料庫狀態、provider reconciliation 與持久化 reliability job 收斂結果。
 - 取餐憑證的建立、查詢、核銷與 expiration 由 pickup service／repository 與 scheduler 處理。
@@ -82,19 +82,19 @@ Mobile 不直接連資料庫或付款 provider。Backend 是身份、價格、�
 ## 課堂展示部署
 
 - 2026-09-10 確認的展示拓撲是：Android APK → Azure App Service 公開 HTTPS 網址 → Azure Database for PostgreSQL Flexible Server。Mobile 不直接連 PostgreSQL，所有身份、價格、權限與資料操作仍經 Backend。
-- 此拓撲只用於非商業課堂展示，和 production 正式上線分開追蹤。App Service 免費層可能休眠且不適合作為可靠的常駐排程主機，因此展示環境預設關閉付款對帳、截止結算與取餐逾期背景排程。
-- Backend 程式更新只需重新部署 App Service，不需要重打 APK。Mobile 目前尚未設定 EAS Update；完成初次設定與重新打包一次後，一般 JavaScript／畫面／圖片變更可線上更新，原生套件、Android 權限或 Expo SDK 變更仍需重新打包。
-- 建立資源、環境變數、資料庫 migration（資料表版本更新）與驗收步驟見 `docs/azure-classroom-deployment.md`。Azure 資源已建立、Backend 已部署並驗證 `/health` 與資料庫讀寫 API 正常；Google 登入尚未在真機上實際驗證過、也尚未完成跨網路端對端驗證，不能把這兩項視為已完成。
+- 此拓撲只用於非商業課堂展示，和 production 正式上線分開追蹤。App Service 免費層可能休眠且不適合作為可靠的常駐排程主機，範本原預設關閉付款對帳、截止結算與取餐逾期背景排程；**但 2026-09-11 起，應使用者要求讓展示環境行為貼近正式版，這三項排程已改為開啟**（`SETTLEMENT_SCHEDULER_ENABLED`、`PAYMENT_RECONCILIATION_ENABLED`+`PAYMENT_RECONCILIATION_ALLOW_PRODUCTION`、`PICKUP_EXPIRATION_SCHEDULER_ENABLED`），並補上了 LINE Pay sandbox 真實憑證與指向 Azure 的 confirm/cancel URL——換言之 LINE Pay sandbox 付款路徑現在真的會被呼叫（`LINE_PAY_ENV` 仍是 `sandbox`，不是真金流）。日後重建或新增展示環境，**不要照抄範本的 `false`**，需以 `docs/azure-classroom-deployment.md`「目前狀態」一節的實際設定為準。
+- Backend 程式更新只需重新部署 App Service，不需要重打 APK（`git push` 到 `main` 觸發 GitHub Actions 自動部署）。**Mobile 已於 2026-09-12 完成 EAS Update 初次設定並實機驗證成功**：`eas update --branch preview` 推送後，已安裝的 APK 重啟會收到更新提示。一般 JavaScript／畫面／圖片變更可透過 EAS Update 線上更新；原生套件、Android 權限或 Expo SDK 變更仍需重新打包（`eas build` 或 `expo run:android`，且打包時須確保有設定 `updates.requestHeaders["expo-channel-name"]` 頻道標頭，純本機 `gradlew assembleRelease` 若跳過頻道設定會導致該份 APK 永遠收不到後續更新，2026-09-12 已實際遇過並修好）。
+- 建立資源、環境變數、資料庫 migration（資料表版本更新）與驗收步驟見 `docs/azure-classroom-deployment.md`。Azure 資源已建立、Backend 已部署並驗證 `/health` 與資料庫讀寫 API 正常；**Google 登入已於 2026-09-11 完成一次真機驗證**（「登入→自動註冊為顧客」流程，以真實姓名與資料庫帳號 ID 格式雙重證據確認非誤判）。但**尚未完成兩帳號、兩網路的跨網路端對端驗證**（目前只驗證過一支手機、一個帳號），也尚未完整走過「開團→下單→LINE Pay sandbox 預授權→截止結算→請款」的完整流程、確認排程照預期運作，這兩項不能視為已完成。
 
 ## 開發、建置與驗證
 
-- Root 使用 npm；`package.json` 負責 Backend、Mobile、database、unit test 與各領域 smoke scripts。Mobile 另有自己的 `package.json`，目前是 Expo SDK 51／React Native 0.74。
+- Root 使用 npm；`package.json` 負責 Backend、Mobile、database、unit test 與各領域 smoke scripts。Mobile 另有自己的 `package.json`，目前是 **Expo SDK ~54／React Native 0.81.5**（2026-08-19 升級並啟用 New Architecture；曾嘗試升級到 SDK 57，因地圖套件在 New Architecture 下顯示異常而暫緩退回 54）。
 - `mobile/app.config.js` 的平台目標是 Android 與 Web。Android development build 使用 `expo run:android`；Web 使用固定本機 port 預覽。
 - Repository 已有 Azure App Service 所需的 `npm start` 與課堂展示操作手冊，但尚未建立 Azure 資源，也沒有可確認的正式 release／store deployment pipeline；root 仍沒有 lint 或 typecheck script。不要把 Expo 開發 build、Web preview 或局部 smoke test 寫成 production build 驗證。
 - `.maestro/` 有環境與登入 smoke flow，但檔案存在不代表本次或目前裝置已執行。驗證結果只記實際跑過的命令與觀察。
 
 ## 已知架構邊界
 
-- `AppNavigator.js` 與 `backend/db.js` 都是大型集中檔案；這是目前實作現況，不等於每次任務都應順便重構。
+- `backend/server.js`（路由＋輸入驗證＋整個 `/admin` 後台 HTML 都集中在此）與 `backend/db.js`（SQLite gateway）都是大型集中檔案；這是目前實作現況，不等於每次任務都應順便重構。Mobile 端舊的集中式 `AppNavigator.js` 已於 2026-09-23 拆分為 react-navigation 架構，但全域業務 state 仍集中在單一的 `AppStateProvider.jsx`（1,000+ 行）。
 - Mobile 同時存在 Backend-synced state、prototype cache 與少量 fixture；功能稽核必須逐條追蹤資料來源。
 - PostgreSQL 是目前開發 Backend 的主要 runtime；在正式多人環境、真金流或 production deployment 前，仍需逐環境驗證連線設定、migration、備份、rollback 與啟用 gate。SQLite 相容路徑不得與 PostgreSQL 混用於同一筆交易。

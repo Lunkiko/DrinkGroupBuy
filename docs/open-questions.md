@@ -1,6 +1,6 @@
 # 未決問題
 
-最後更新：2026-09-30
+最後更新：2026-10-21
 
 ## 語言規則
 
@@ -23,7 +23,8 @@
 | Medium | PostgreSQL runtime adapter | Reliability schema parity、`pg`、SQLite/PostgreSQL adapter 與 smoke 已完成；`backend/db.js` 尚未搬移，runtime 仍是 SQLite |
 | Medium | Notification table / delivery | 尚未設計 notification 或 delivery event schema；顧客端推播（開團成功、可以領飲料）與維運警報（沿用既有 `ALERT_WEBHOOK_URL` 通用 webhook，n8n 方案已於 2026-10-02 取消）的分工見「一致性與營運」表 |
 | Medium | 菜單管理與下單 E2E | 權威菜單 API、商家管理畫面、後端驗證與價格重算已完成第一版；仍需完整 Android E2E 與更細的逐項衝突修正 UX |
-| Medium | 正式退款申請 UI 與退款失敗重試 | 商家只提出退款申請、營運執行退款的規則已確認；`POST /api/merchant/orders/:orderId/refund-requests`（商家申請）與 `POST /api/admin/refund-requests/:requestId/approve`／`reject`（營運審核，重用既有 LINE Pay refund service）已完成第一版並有 `refund-request:smoke` 覆蓋；商家／營運手機或後台申請審核 UI、核准失敗時的正式重試 UX 與告警、正式 sandbox 人工端對端測試尚未完成 |
+| High | 資金收付方案與平台收費模式 | **2026-10-21 方向已拍板**：長期走「商家自有 LINE Pay 帳號」（方案 B），不是目前程式碼的「平台代收」（方案 A）；退款改為商家與顧客自行解決、商家在 App 內自報狀態（金額、原因、24 小時內可撤銷），平台不執行退款、不墊撥款。2026-09-06 歸檔分支寫下的「平台代收＋撥款」方向已不適用。仍待決定：抽成／訂閱收費模式本身、平台向商家收這筆費用的資金流與法規考量、商家各自申請 LINE Pay 的流程與輔助方式；詳見 `docs/payment-rules-and-flow.md`「資金收付與平台收費」與「退款」。遷移既有方案 A 程式碼（`feat/merchant-direct-refund` 分支）尚未開始 |
+| Medium | 商家退款：每日上限、異常暫停與真實金流驗證 | **2026-10-21 方向已改**：這整條是方案 A（平台代收）的設計——商家直接退款會呼叫 LINE Pay refund API（`POST /api/merchant/orders/:orderId/refunds`，單筆不得超過剩餘可退金額、需確認視窗、有冪等與 audit log），後端有單元測試與 Postgres 暫時 schema 測試，`feat/merchant-direct-refund` 分支已實作。但同一天稍後確定長期方向走方案 B，退款改為商家自報狀態、不呼叫 provider，詳見 `docs/payment-rules-and-flow.md`「退款」長期方向。這條原本列的「每日總額上限、單一商家異常退款自動暫停」在方案 B 下不是同一個問題（平台不墊錢，沒有向商家扣回的需求），遷移完成前暫不視為必須補的待辦；舊的申請／審核 API 與 `/admin/refund-requests` 保留處理既有待審申請 |
 
 ## 身份與權限
 
@@ -99,7 +100,7 @@
 | Resolved | 活動未達標時，authorization 何時 void？                                                                                                           | 截止結算時立即處理；未達標且顧客未接受原價購買的訂單，系統取消授權 `void` 並取消訂單。                                                                             |
 | Resolved | capture 失敗如何重試或升級處理？                                                                                                                  | 截止時立即請款；暫時性失敗每 30 秒重試一次，總計最多三次。每次重試前先查 provider 狀態避免重複請款；三次失敗或不可重試時停止自動請款，訂單不進入製作，並開放期限內手動重新付款。 |
 | Resolved | void 失敗如何重試或升級處理？ | 暫時性失敗每 30 秒重試一次，總計最多三次；每次重試前查詢 provider 狀態。三次失敗或不可重試時停止自動 void 並告警，在 provider 狀態確認前不得標記為 `authorization_voided`。 |
-| Resolved | 商家是否可以直接執行退款？ | 第一階段不可以。商家只能針對自己門市的已請款訂單提出退款申請並填寫金額與原因；由營運／補救權限確認後呼叫 provider。正式流程需有可退餘額檢查、冪等、跨執行個體鎖、audit log、reconciliation 與失敗告警。 |
+| Resolved | 商家是否可以直接執行退款？ | 可以（2026-10-21 由原本「第一階段不可以」改為可以，目的是降低營運成本）。商家只能針對自己門市、已請款的訂單執行退款，顧客不能自行退款。**同一天稍後方向再更新**：怎麼「執行」退款從「商家按鈕→平台呼叫 LINE Pay refund API」改成「商家與顧客自行解決、商家在 App 內自報狀態（填金額與原因，24 小時內可撤銷）」，平台不再代為呼叫 provider；原本的 API 版本已在 `feat/merchant-direct-refund` 分支實作，屬方案 A 設計，待遷移。詳見 `docs/payment-rules-and-flow.md`「退款」。 |
 | Resolved | webhook 簽章、重複事件與 out-of-order events 如何處理？                                                                                           | 第一版不做 LINE Pay webhook endpoint；LINE Pay Online API 以 confirm/cancel redirect 加 provider 狀態查詢為主。若未來接 provider webhook，必須先驗簽、保存 raw payload、用 idempotency key 去重，並以資料庫狀態轉換規則處理亂序事件。 |
 | Resolved | LINE Pay confirm 是否立即把訂單更新為 `authorized`？                                                                                              | 第一個 backend slice 先這樣做：confirm 更新 `payment_authorizations`、`orders.payment_status`、`orders.authorization_status`。                                      |
 | Resolved | LINE Pay redirect 後，mobile app 如何取得更新後的 `authorized` 狀態？                                                                             | 第一階段用付款結果頁 polling、返回前景重新讀取訂單、手動重新整理；deep link 可留到後續。                                                                           |
