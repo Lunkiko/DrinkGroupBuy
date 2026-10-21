@@ -4,9 +4,12 @@ const { createRuntimeDatabaseAdapter } = require("..");
 
 // An order only counts toward "money saved" once the customer was really charged the discounted
 // price and still holds (or has received) the drinks:
-//   - payment_status = 'captured'  -> the discounted final_amount was actually charged. Fully
-//     refunded orders become 'refunded' and drop out; pending/authorized/voided/failed never had
-//     a final price to compare against.
+//   - payment_status = 'captured'  -> the discounted final_amount was actually charged.
+//     pending/authorized/voided/failed never had a final price to compare against. Scheme B
+//     self-reported refunds (merchant_refund_marks, 2026-10-21) never flip this back to
+//     'refunded' -- unlike the old provider-executed refund, a merchant's own mark is the only
+//     signal a full refund happened, so a fully-marked order is excluded by the EXISTS below
+//     instead of by this status check.
 //   - status <> 'cancelled'        -> cancelled orders are not a purchase.
 //   - pickup_status <> expired     -> an unclaimed order keeps payment_status = 'captured' (no
 //     refund, see pickupCredentialRepository), but the customer never got the drink, so nothing
@@ -33,6 +36,10 @@ async function getCustomerSavingsSummaryPostgres(database, customerUserId) {
       AND orders.final_amount IS NOT NULL
       AND orders.original_amount > orders.final_amount
       AND activity.status <> 'cancelled'
+      AND orders.final_amount > COALESCE((
+        SELECT SUM(mark.amount) FROM merchant_refund_marks mark
+        WHERE mark.order_id = orders.id AND mark.status = 'active'
+      ), 0)
   `, [customerUserId]);
 
   const row = result.rows[0] || {};

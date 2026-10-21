@@ -14,8 +14,10 @@ const WEEKLY_TREND_WEEKS = 9;
 // The orders that count as this store's sales -- one definition shared by every figure below so the
 // revenue, discount and top-drinks numbers always describe the same set of orders:
 //   - the order belongs to an activity of THIS store (the only tenant boundary; $1 is that store id)
-//   - payment_status = 'captured' -> money was really collected. A fully refunded order becomes
-//     'refunded' and drops out; authorized/voided/failed orders never produced revenue.
+//   - payment_status = 'captured' -> money was really collected; authorized/voided/failed orders
+//     never produced revenue. Scheme B self-reported refunds (merchant_refund_marks, 2026-10-21)
+//     never flip this back to 'refunded', even for a full refund -- revenue is netted against
+//     those marks below instead of relying on a status change to drop the order out.
 //   - orders.status <> 'cancelled' and activity.status <> 'cancelled' -> an admin can cancel an
 //     already-settled activity, which leaves its captured orders untouched (they are skipped by the
 //     cancel flow) even though the drinks will never be made, so they are not counted as sales.
@@ -33,20 +35,23 @@ const SALES_ORDER_FILTER = `
 // before it gets here; every query filters on it, so a store can only ever see its own rows.
 async function getStoreStatisticsPostgres(database, storeId) {
   const [salesResult, activityResult, drinksResult] = await Promise.all([
-    // Partial refunds are subtracted from revenue (the store gave that money back); the discount is
-    // original_amount - final_amount and is unaffected by refunds.
+    // Refunds (partial or full -- see the comment above on SALES_ORDER_FILTER) are subtracted from
+    // revenue, since that's money the store gave back; the discount is original_amount - final_amount
+    // and is unaffected by refunds. Order count and discount totals still count a fully-refunded
+    // order -- whether those should also exclude it is a separate, not-yet-decided product question
+    // (see docs/payment-rules-and-flow.md "退款"); this only fixes the revenue figure itself.
     database.query(`
       SELECT
         COUNT(*) AS order_count,
         COALESCE(SUM(orders.final_amount), 0) AS gross_revenue,
-        COALESCE(SUM(refund.refunded_amount), 0) AS partial_refund_total,
+        COALESCE(SUM(refund.refunded_amount), 0) AS refund_total,
         COALESCE(SUM(orders.original_amount - orders.final_amount), 0) AS discount_given_total
       FROM orders
       JOIN group_buy_activities activity ON activity.id = orders.activity_id
       LEFT JOIN (
-        SELECT order_id, SUM(refund_amount) AS refunded_amount
-        FROM payment_refunds
-        WHERE status = 'refunded'
+        SELECT order_id, SUM(amount) AS refunded_amount
+        FROM merchant_refund_marks
+        WHERE status = 'active'
         GROUP BY order_id
       ) refund ON refund.order_id = orders.id
       WHERE ${SALES_ORDER_FILTER}
@@ -82,7 +87,7 @@ async function getStoreStatisticsPostgres(database, storeId) {
   const settledActivityCount = qualifiedActivityCount + Number(activities.failed_count || 0);
 
   return {
-    totalRevenue: Number(sales.gross_revenue || 0) - Number(sales.partial_refund_total || 0),
+    totalRevenue: Number(sales.gross_revenue || 0) - Number(sales.refund_total || 0),
     orderCount: Number(sales.order_count || 0),
     discountGivenTotal: Number(sales.discount_given_total || 0),
     settledActivityCount,

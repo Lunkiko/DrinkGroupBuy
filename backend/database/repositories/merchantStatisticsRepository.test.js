@@ -28,7 +28,7 @@ const emptyFake = () => createFakeDatabase({ sales: [], activities: [], drinks: 
 
 test("statistics combine the three queries into one summary", async () => {
   const fake = createFakeDatabase({
-    sales: [{ order_count: "12", gross_revenue: "1800", partial_refund_total: "130", discount_given_total: "240" }],
+    sales: [{ order_count: "12", gross_revenue: "1800", refund_total: "130", discount_given_total: "240" }],
     activities: [{ qualified_count: "3", failed_count: "1" }],
     drinks: [{ name: "青山烏龍拿鐵", cups: "9" }, { name: "紅茶", cups: "4" }],
   });
@@ -70,7 +70,8 @@ test("revenue, discount and top drinks all count the same set of orders", async 
     assert.match(statement, /AND orders\.status <> 'cancelled'/);
     assert.match(statement, /AND orders\.final_amount IS NOT NULL/);
   }
-  assert.match(salesQuery.statement, /WHERE status = 'refunded'/);
+  assert.match(salesQuery.statement, /FROM merchant_refund_marks/);
+  assert.match(salesQuery.statement, /WHERE status = 'active'/);
   assert.match(drinksQuery.statement, /ORDER BY cups DESC, name ASC LIMIT \$2/);
   assert.equal(drinksQuery.parameters[1], 3);
 });

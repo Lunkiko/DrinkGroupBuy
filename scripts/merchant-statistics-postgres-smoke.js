@@ -56,15 +56,17 @@ function buildExpectedWeeklyTrend(targetWeekFigures) {
 }
 
 // One activity per order (unique index: one non-cancelled order per activity and customer).
-// items: [name, quantity, unit price]. `refunds` are payment_refunds rows recorded against the order.
+// items: [name, quantity, unit price]. `refunds` are merchant_refund_marks rows recorded against
+// the order (scheme B self-reported refund, 2026-10-21) -- [status, amount] pairs, status is
+// 'active' (counts against revenue) or 'revoked' (must not).
 const orders = [
   // ---- These four are the store's sales.
   { key: "sold-discounted", store: "target", activityStatus: "completed", settlement: "qualified", status: "completed", payment: "captured", pickup: "picked_up", cups: 3, original: 195, final: 137, items: [["烏龍拿鐵", 3, 65]] },
   { key: "sold-unclaimed", store: "target", activityStatus: "completed", settlement: "qualified", status: "completed", payment: "captured", pickup: "expired", cups: 2, original: 130, final: 104, items: [["烏龍拿鐵", 2, 65]] },
   { key: "sold-full-price", store: "target", activityStatus: "completed", settlement: "failed", status: "completed", payment: "captured", pickup: "picked_up", cups: 3, original: 60, final: 60, items: [["紅茶", 1, 30], ["奶茶", 2, 15]] },
-  { key: "sold-part-refunded", store: "target", activityStatus: "completed", settlement: null, status: "completed", payment: "captured", pickup: "picked_up", cups: 3, original: 100, final: 80, items: [["紅茶", 2, 30], ["綠茶", 1, 40]], refunds: [["refunded", 30]] },
-  // Two completed refunds add up (10 + 5); a pending and a failed refund must NOT be subtracted.
-  { key: "sold-many-refunds", store: "target", activityStatus: "completed", settlement: null, status: "completed", payment: "captured", pickup: "picked_up", cups: 1, original: 50, final: 40, items: [["冬瓜茶", 1, 50]], refunds: [["refunded", 10], ["refunded", 5], ["pending", 20], ["failed", 20]] },
+  { key: "sold-part-refunded", store: "target", activityStatus: "completed", settlement: null, status: "completed", payment: "captured", pickup: "picked_up", cups: 3, original: 100, final: 80, items: [["紅茶", 2, 30], ["綠茶", 1, 40]], refunds: [["active", 30]] },
+  // Two active marks add up (10 + 5); a revoked mark must NOT be subtracted.
+  { key: "sold-many-refunds", store: "target", activityStatus: "completed", settlement: null, status: "completed", payment: "captured", pickup: "picked_up", cups: 1, original: 50, final: 40, items: [["冬瓜茶", 1, 50]], refunds: [["active", 10], ["active", 5], ["revoked", 20]] },
   // ---- None of these may count.
   { key: "fully-refunded", store: "target", activityStatus: "completed", settlement: null, status: "completed", payment: "refunded", pickup: "picked_up", cups: 99, original: 9900, final: 9000, items: [["不該出現-全額退款", 99, 100]] },
   { key: "activity-cancelled", store: "target", activityStatus: "cancelled", settlement: "qualified", status: "locked", payment: "captured", pickup: "not_ready", cups: 99, original: 9900, final: 9000, items: [["不該出現-團購取消", 99, 100]] },
@@ -217,36 +219,21 @@ async function insertOrders(transaction, { customerId, creatorId, iso }) {
       `, [`settlement-stats-proof-${fixture.key}-${proofId}`, fixture.activityId, fixture.settlement,
         fixture.cups, fixture.original - fixture.final, iso(-30)]);
     }
-    if (fixture.refunds) await insertRefunds(transaction, fixture, iso);
+    if (fixture.refunds) await insertRefundMarks(transaction, fixture, creatorId, iso);
   }
 }
 
-async function insertRefunds(transaction, fixture, iso) {
-  const authorizationId = `authorization-stats-proof-${fixture.key}-${proofId}`;
-  const captureId = `capture-stats-proof-${fixture.key}-${proofId}`;
-  await transaction.query(`
-    INSERT INTO payment_authorizations (
-      id, order_id, provider, payment_flow, status, original_amount, authorized_amount,
-      provider_authorization_id, authorized_at, created_at, updated_at
-    ) VALUES ($1, $2, 'mock_line_pay', 'authorization', 'captured', $3, $3, $4, $5, $5, $5)
-  `, [authorizationId, fixture.orderId, fixture.original, `tx-stats-proof-${fixture.key}-${proofId}`, iso(-90)]);
-  await transaction.query(`
-    INSERT INTO payment_captures (
-      id, payment_authorization_id, order_id, status, final_amount, capture_amount, released_amount,
-      provider_capture_id, captured_at, attempt_number, retryable, created_at, updated_at
-    ) VALUES ($1, $2, $3, 'captured', $4, $4, $5, $6, $7, 1, false, $7, $7)
-  `, [captureId, authorizationId, fixture.orderId, fixture.final, fixture.original - fixture.final,
-    `cap-stats-proof-${fixture.key}-${proofId}`, iso(-30)]);
+async function insertRefundMarks(transaction, fixture, creatorId, iso) {
   for (const [index, [status, amount]] of fixture.refunds.entries()) {
+    const revoked = status === "revoked";
     await transaction.query(`
-      INSERT INTO payment_refunds (
-        id, payment_capture_id, payment_authorization_id, order_id, provider, status,
-        refund_amount, provider_refund_id, idempotency_key, refunded_at, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, 'mock_line_pay', $5, $6, $7, $8, $9, $10, $10)
-    `, [`refund-stats-proof-${fixture.key}-${index}-${proofId}`, captureId, authorizationId, fixture.orderId,
-      status, amount, `rf-stats-proof-${fixture.key}-${index}-${proofId}`,
-      `refund-key-stats-proof-${fixture.key}-${index}-${proofId}`,
-      status === "refunded" ? iso(-10) : null, iso(-10)]);
+      INSERT INTO merchant_refund_marks (
+        id, order_id, store_id, marked_by_user_id, amount, reason, status,
+        idempotency_key, revoked_at, revoked_by_user_id, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, 'stats proof', $6, $7, $8, $9, $10, $10)
+    `, [`refund-mark-stats-proof-${fixture.key}-${index}-${proofId}`, fixture.orderId, STORES[fixture.store],
+      creatorId, amount, status, `refund-mark-key-stats-proof-${fixture.key}-${index}-${proofId}`,
+      revoked ? iso(-5) : null, revoked ? creatorId : null, iso(-10)]);
   }
 }
 
@@ -255,9 +242,7 @@ async function cleanup(database) {
   const activityIds = orders.map((fixture) => fixture.activityId);
   const storeIds = Object.values(STORES);
   await database.transaction(async (transaction) => {
-    await transaction.query("DELETE FROM payment_refunds WHERE order_id = ANY($1::text[])", [orderIds]);
-    await transaction.query("DELETE FROM payment_captures WHERE order_id = ANY($1::text[])", [orderIds]);
-    await transaction.query("DELETE FROM payment_authorizations WHERE order_id = ANY($1::text[])", [orderIds]);
+    await transaction.query("DELETE FROM merchant_refund_marks WHERE order_id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM activity_settlements WHERE activity_id = ANY($1::text[])", [activityIds]);
     await transaction.query("DELETE FROM orders WHERE id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM group_buy_activities WHERE id = ANY($1::text[])", [activityIds]);
