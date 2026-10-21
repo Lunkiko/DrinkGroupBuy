@@ -174,7 +174,7 @@ updated: 2026-10-21
 - 商家退款（方案 B：自報設計）[進行中]
   > 顧客要退款時，不再由系統出面執行退款，改成商家跟顧客自行約定怎麼退（例如商家自己操作 LINE Pay、現金或轉帳），商家只在 App 裡把這筆退款「記一筆」，讓系統的營收統計跟著扣掉這筆錢；商家在記錄後 24 小時內可以自己撤銷這筆記錄（例如填錯金額）。取代原本「商家按鈕→系統直接呼叫 LINE Pay 幫忙退款」的做法。完整規則見 `docs/payment-rules-and-flow.md`「退款」長期方向。
   - 舊方案 A 直接退款實作 [已封存] (10/21) — 原本「商家按鈕→後端呼叫 LINE Pay 退款 API」的做法，已於同一天確定長期方向改走方案 B 後整支改寫；舊程式碼封存在 git tag `archive/merchant-refund-scheme-a`（commit `27b171e`），需要時可用 `git show archive/merchant-refund-scheme-a:<檔案路徑>` 取回單一檔案的舊內容
-  - 《設計》退款記錄資料表 [待處理]
+  - 《設計》退款記錄資料表 [完成] (10/21) — 新表 `merchant_refund_marks`（`database/migrations/011_merchant_refund_marks_postgres.sql`，同步加進 `database/schema.sql` 與 `docs/AI-database-field-spec.md`）；經 `backend-architect` 角色 Skill 審查後補強：`status`／`revoked_at`／`revoked_by_user_id` 一致性與「撤銷時間不晚於建立時間 24 小時」各有 CHECK constraint，`idempotency_key` 唯一範圍改成「同一商家內」（不是全域，避免重蹈 `refund_requests` 曾經出現的跨商家冪等鍵碰撞問題），並補上 `(order_id) WHERE status='active'` 的 partial index。已在一次性暫時 Postgres schema（`scripts/with-temp-schema.js`）裡驗證：migration 套用成功、4 種違規寫入（revoked 缺欄位、撤銷超過 24 小時、同商家重複 key、）皆被正確擋下，不同商家可重用相同 key 文字也驗證通過；驗證用的腳本是暫時檔案，驗證完已刪除，不是永久測試
     > 存放商家標記退款的紀錄：訂單、金額、原因、狀態（生效中／已撤銷）、誰標記的、什麼時候標記的。跟現有的退款申請表分開，不共用，避免影響既有待審申請。
   - 《開發》Backend：標記與撤銷退款 [待處理]
     > 商家標記訂單退款、24 小時內撤銷標記的後端邏輯：金額不能超過訂單可退餘額、只能動自己門市的訂單、防止重複送出。

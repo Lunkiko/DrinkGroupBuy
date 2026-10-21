@@ -370,6 +370,45 @@ CREATE UNIQUE INDEX idx_refund_requests_pending_per_capture
 ON refund_requests(payment_capture_id)
 WHERE status = 'pending';
 
+-- Scheme B self-reported refund (2026-10-21): merchant and customer settle the refund themselves,
+-- the backend never calls a provider refund API, this just records what the merchant says happened.
+-- Deliberately a separate table from refund_requests/payment_refunds above: those two mean
+-- "waiting on a provider response" (pending -> approved/refunded); a row here is a terminal fact
+-- the moment it's written. Sharing a table would have meant changing that older pending/approved/
+-- rejected state machine, which is still serving the existing admin-review backlog.
+-- A single order can have multiple rows (partial refunds marked one at a time); the sum of this
+-- order's currently-`active` amounts must never exceed orders.final_amount -- enforced in the
+-- application transaction (with a row lock) rather than a CHECK, since a CHECK only ever sees the
+-- row being written, not the other rows for the same order.
+CREATE TABLE merchant_refund_marks (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id),
+  store_id TEXT NOT NULL REFERENCES stores(id),
+  marked_by_user_id TEXT NOT NULL REFERENCES users(id),
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  -- Unlike refund_requests.idempotency_key (globally UNIQUE), this is scoped per merchant: a prior
+  -- security review found a global key let one merchant's key collide with another's row, requiring
+  -- the caller to re-verify after every lookup. Scoping it here closes that bug class structurally.
+  idempotency_key TEXT NOT NULL,
+  revoked_at TEXT,
+  revoked_by_user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (marked_by_user_id, idempotency_key),
+  CHECK (
+    (status = 'revoked') = (revoked_at IS NOT NULL)
+    AND (status = 'revoked') = (revoked_by_user_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX idx_merchant_refund_marks_order_active
+ON merchant_refund_marks(order_id)
+WHERE status = 'active';
+
+CREATE INDEX idx_merchant_refund_marks_store ON merchant_refund_marks(store_id, status);
+
 CREATE TABLE payment_provider_events (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
