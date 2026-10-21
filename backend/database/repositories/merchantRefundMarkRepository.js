@@ -41,7 +41,9 @@ async function createRefundMarkPostgres(database, input = {}) {
         [input.actorUserId, idempotencyKey]
       );
       if (existing.rows[0]) {
-        return { refundMark: mapRefundMark(existing.rows[0]), alreadyExists: true };
+        return matchesIdempotentReplay(existing.rows[0], input)
+          ? { refundMark: mapRefundMark(existing.rows[0]), alreadyExists: true }
+          : { error: "idempotency_key_conflict" };
       }
 
       // Locks the order row for the rest of this transaction. This is what actually serializes
@@ -116,10 +118,10 @@ async function createRefundMarkPostgres(database, input = {}) {
         "SELECT * FROM merchant_refund_marks WHERE marked_by_user_id = $1 AND idempotency_key = $2",
         [input.actorUserId, idempotencyKey]
       );
-      return {
-        refundMark: existing.rows[0] ? mapRefundMark(existing.rows[0]) : null,
-        alreadyExists: true
-      };
+      if (!existing.rows[0]) return { error: "idempotency_key_conflict" };
+      return matchesIdempotentReplay(existing.rows[0], input)
+        ? { refundMark: mapRefundMark(existing.rows[0]), alreadyExists: true }
+        : { error: "idempotency_key_conflict" };
     }
     throw error;
   }
@@ -207,6 +209,20 @@ async function insertAudit(database, actionType, resourceId, metadata, actorUser
       id, actor_user_id, action_type, resource_type, resource_id, metadata_json, created_at
     ) VALUES ($1, $2, $3, 'merchant_refund_mark', $4, $5::jsonb, $6)
   `, [`audit-log-${randomUUID()}`, actorUserId || null, actionType, resourceId, JSON.stringify(metadata), now]);
+}
+
+// The idempotency-key lookup is scoped per merchant, not globally (see the table's migration
+// comment), but a key is still just client-supplied text -- nothing stops the same merchant from
+// reusing one key across two of their own, different orders (a stale key on a retried request, a
+// client bug). Without this check the second call would silently hand back the FIRST order's mark
+// as "success" and never write anything for the order actually named in the second request. This
+// mirrors the fix docs/AI-security-review-log.md already recorded for the same bug class in the
+// archived scheme-A refundOrderAsMerchant.
+function matchesIdempotentReplay(existingRow, input) {
+  if (existingRow.order_id !== input.orderId) return false;
+  if (input.storeId && existingRow.store_id !== input.storeId) return false;
+  if (Number(existingRow.amount) !== Number(input.amount)) return false;
+  return true;
 }
 
 function normalizeKey(value) {

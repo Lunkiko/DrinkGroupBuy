@@ -105,7 +105,8 @@ function markErrorStatusCode(error) {
     invalid_refund_amount: 400,
     refund_amount_exceeds_remaining_amount: 409,
     refund_reason_required: 400,
-    idempotency_key_required: 400
+    idempotency_key_required: 400,
+    idempotency_key_conflict: 409
   };
   return statusCodes[error] || 400;
 }
@@ -115,6 +116,7 @@ function markErrorMessage(error) {
     order_not_found: "Order not found",
     order_not_captured: "This order has no captured payment to refund",
     order_store_mismatch: "Order does not belong to this store",
+    idempotency_key_conflict: "This idempotencyKey was already used for a different order or amount",
     invalid_refund_amount: "amount must be a positive integer",
     refund_amount_exceeds_remaining_amount: "amount exceeds the order's remaining refundable amount",
     refund_reason_required: "reason is required",

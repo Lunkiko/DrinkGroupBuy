@@ -55,6 +55,27 @@ async function main() {
     );
     assert.equal(markCountAfterRepeat.rows[0].count, 1, "a repeated key must not create a second mark");
 
+    // 2b. Reusing that same key for a DIFFERENT order (one the merchant also legitimately owns)
+    // must be refused, not silently hand back orderIdMain's mark as if it succeeded for this one --
+    // see docs/AI-security-review-log.md for the bug class this guards against.
+    let keyConflictError = null;
+    try {
+      await markOrderRefundedByMerchant({
+        authUser: merchantUser,
+        orderId: orderIdWindow,
+        body: { amount: 5, reason: "postgres_proof_key_reuse_other_order", idempotencyKey: firstKey },
+        merchantRefundMarkRepository,
+      });
+    } catch (error) {
+      keyConflictError = error;
+    }
+    assert.equal(keyConflictError?.statusCode, 409);
+    assert.equal(keyConflictError?.payload?.status, "idempotency_key_conflict");
+    const markCountForOtherOrder = await database.query(
+      "SELECT COUNT(*)::integer AS count FROM merchant_refund_marks WHERE order_id = $1", [orderIdWindow]
+    );
+    assert.equal(markCountForOtherOrder.rows[0].count, 0, "the reused key must not create a mark under the wrong order");
+
     // 3. The cap: order final_amount is 90, 40 is already active, so 51 is refused.
     let overCapError = null;
     try {

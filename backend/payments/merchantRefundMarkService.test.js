@@ -27,7 +27,12 @@ function createFakeRepository({ storeId = "store-1", remainingRefundableAmount =
       calls.push("createRefundMark");
       const keyLookup = `${input.actorUserId}:${input.idempotencyKey}`;
       const existing = marksByKey.get(keyLookup);
-      if (existing) return { refundMark: existing, alreadyExists: true };
+      if (existing) {
+        const matches = existing.orderId === input.orderId && existing.amount === input.amount;
+        return matches
+          ? { refundMark: existing, alreadyExists: true }
+          : { error: "idempotency_key_conflict" };
+      }
 
       const remaining = remainingRefundableAmount - activeTotal;
       if (input.amount > remaining) {
@@ -156,6 +161,22 @@ test("sending the same key twice returns the first result, not a second mark", a
   assert.equal(first.refundMark.id, second.refundMark.id);
   assert.equal(first.idempotent, false);
   assert.equal(second.idempotent, true);
+});
+
+test("reusing the same key for a different order or amount is refused, not silently handed back", async () => {
+  const repository = createFakeRepository();
+  await mark(repository); // orderId "order-1", amount 60, key KEY
+
+  await rejectsWith(
+    mark(repository, { orderId: "order-2", body: { amount: 60, reason: "x", idempotencyKey: KEY } }),
+    409,
+    /idempotencyKey was already used for a different order or amount/
+  );
+  await rejectsWith(
+    mark(repository, { body: { amount: 61, reason: "x", idempotencyKey: KEY } }),
+    409,
+    /idempotencyKey was already used for a different order or amount/
+  );
 });
 
 test("a merchant revokes their own mark within the window", async () => {
