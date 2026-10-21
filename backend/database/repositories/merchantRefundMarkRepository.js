@@ -17,6 +17,7 @@ function createMerchantRefundMarkRepository(input = {}) {
     createRefundMark: (value) => createRefundMarkPostgres(database, value),
     revokeRefundMark: (value) => revokeRefundMarkPostgres(database, value),
     getActiveRefundTotalForOrder: (value) => getActiveRefundTotalForOrderPostgres(database, value),
+    listRefundMarksForStore: (value) => listRefundMarksForStorePostgres(database, value),
     close: async () => {
       if (ownsDatabase) await database.close();
     },
@@ -175,6 +176,19 @@ async function getActiveRefundTotalForOrderPostgres(database, input = {}) {
     WHERE order_id = $1 AND status = 'active'
   `, [input.orderId]);
   return Number(result.rows[0]?.active_total || 0);
+}
+
+async function listRefundMarksForStorePostgres(database, input = {}) {
+  const result = input.status
+    ? await database.query(
+        "SELECT * FROM merchant_refund_marks WHERE store_id = $1 AND status = $2 ORDER BY created_at DESC",
+        [input.storeId, input.status]
+      )
+    : await database.query(
+        "SELECT * FROM merchant_refund_marks WHERE store_id = $1 ORDER BY created_at DESC",
+        [input.storeId]
+      );
+  return result.rows.map(mapRefundMark);
 }
 
 async function getOrderStoreIdPostgres(database, input = {}) {

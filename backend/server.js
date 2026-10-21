@@ -1238,6 +1238,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const merchantRefundMarksListMatch = url.pathname.match(/^\/api\/merchant\/stores\/([^/]+)\/refund-marks$/);
+    if (request.method === "GET" && merchantRefundMarksListMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) return sendJson(response, 401, { error: "Authentication required" });
+      if (!authUser.roles.includes("merchant") || !canManageStore(authUser, merchantRefundMarksListMatch[1])) {
+        return sendJson(response, 403, { error: "Store access denied" });
+      }
+      const refundMarks = await merchantRefundMarkRepository.listRefundMarksForStore({
+        storeId: merchantRefundMarksListMatch[1],
+        status: url.searchParams.get("status") || undefined
+      });
+      sendJson(response, 200, { refundMarks });
+      return;
+    }
+
     const createMerchantRefundRequestMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-requests$/);
     if (request.method === "POST" && createMerchantRefundRequestMatch) {
       const authUser = await getAuthenticatedUser(request);
@@ -4738,6 +4753,7 @@ function isSqliteOrderDependentRoute(method, pathname) {
     || /^\/api\/merchant\/orders\/[^/]+\/refund-requests$/.test(pathname)
     || /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
     || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
+    || /^\/api\/merchant\/stores\/[^/]+\/refund-marks$/.test(pathname)
     || /^\/api\/merchant\/stores\/[^/]+\/refund-requests$/.test(pathname)
     || pathname === "/api/admin/refund-requests"
     || /^\/api\/admin\/refund-requests\/[^/]+\/(approve|reject)$/.test(pathname)
@@ -4799,6 +4815,13 @@ function isSettlementRouteReadyForPostgres(method, pathname) {
       /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
       || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
     )
+  ) {
+    return true;
+  }
+  if (
+    method === "GET"
+    && merchantRefundMarkRepository.kind === "postgres"
+    && /^\/api\/merchant\/stores\/[^/]+\/refund-marks$/.test(pathname)
   ) {
     return true;
   }

@@ -12,7 +12,7 @@ updated: 2026-10-21
 - 商家建立與取消團購活動
 - 商家管理店內菜單
 - 商家標記訂單可取餐、查看待製作明細
-- 商家處理顧客退款（重新設計中，見下方「金流」區塊）
+- 商家標記顧客退款（自己退款給顧客後在 App 記錄一筆，24 小時內可撤銷，不經系統執行）
 - 管理員網頁後台審核退款、取消團購、審核商家申請
 - 管理員在網頁後台切換已註冊帳號的顧客／商家使用角色
 - 系統截止結算（折扣試算、正式請款）
@@ -180,8 +180,9 @@ updated: 2026-10-21
     > 商家標記訂單退款、24 小時內撤銷標記的後端邏輯：金額不能超過訂單可退餘額、只能動自己門市的訂單、防止重複送出。
   - 《開發》Backend：統計改用即時加總 [待處理]
     > 商家營收等統計查詢，改成即時扣掉目前「生效中」的退款金額，不去改動團購結算當下留下的折扣快照。
-  - 《開發》Mobile：商家退款畫面改版 [待處理]
-    > 退款確認視窗文字從「無法撤回」改成「24 小時內可撤銷」，新增撤銷退款的按鈕。**目前狀態**：手機端仍呼叫已移除的舊端點，這塊做完前退款功能在 App 上無法使用，不是可選的收尾。
+  - 《開發》Mobile：商家退款畫面改版 [完成] (10/22) — `MerchantRefundRequestsScreen.jsx` 改接新端點（`markOrderRefunded`／`revokeRefundMark`／`listMerchantRefundMarks`，`apiClient.js` 新增）；表單改顯示「剩餘可退金額」（結算金額減掉目前生效中的標記金額，不是訂單原金額），確認視窗文字按建議改成兩句話（這只是記錄，商家要自己退錢／24 小時內可撤銷），拿掉原本的危險色警示；退款紀錄卡片新增「撤銷」按鈕，用絕對時間顯示「可撤銷至 MM/DD HH:mm」（不做即時倒數），撤銷用兩段式按鈕確認（先「再按一次取消」／「確定撤銷」，不是跳 modal）。新增 `refundMarkStatusLabels`（`prototypeTypes.js`）與對應色調（`statusTones.js`：`active`=success、`revoked`=neutral），`StatusBadge` 註冊新 owner；同步更新 `themeTokens.test.mjs` 的 `LABEL_MAPS`（這是硬寫的清單，不會自動抓到新加的狀態）。後端新增對應的 `GET /api/merchant/stores/:storeId/refund-marks` 列表端點（含 repository／route／兩個 Postgres-ready 守門清單）
+    > 商家選一筆已請款的訂單、填金額和原因、在確認視窗按下確認後標記退款的畫面；下方同一頁可以看到自己標記過的退款記錄，24 小時內能撤銷。
+  - 《驗證》瀏覽器端對端操作 [完成] (10/22) — 本機啟動 backend（port 3001）與 `mobile:web:dev`（自動指向本機 backend，不用改 `.env`），用既有的開發身份切換器登入 `merchant1`（青山手作茶 中科店）這個真實種子帳號，對真實已請款訂單（`demo-seed-order-378-01`，$50）實際操作一輪完整流程：填金額原因→確認視窗文字正確顯示→標記成功→訂單正確顯示「已全額標記退款」→退款紀錄卡片正確顯示金額／原因／「可撤銷至」時間→兩段式撤銷按鈕正確運作→撤銷成功→訂單恢復可退款狀態。全程瀏覽器 console 無錯誤。事後查資料庫確認訂單本身未受影響（`payment_status` 仍是 `captured`），只留下一筆 `status = 'revoked'` 的標記記錄作為這次驗證的痕跡，不影響任何既有資料
   - 《測試》自動化測試與 Postgres 暫時 schema 測試 [完成] (10/22) — 單元測試 `backend/payments/merchantRefundMarkService.test.js`（15 項，涵蓋角色/門市權限、金額與原因驗證、冪等重送、超額、撤銷擁有者、撤銷視窗、撤銷已撤銷的冪等行為、跨訂單/門市的 404），`npm test` 306/306 全過。真實 Postgres smoke `scripts/merchant-refund-mark-postgres-smoke.js`（`npm run merchant-refund-mark-postgres:smoke`）涵蓋標記、冪等、超額金額、跨門市拒絕、撤銷、非本人撤銷、撤銷逾期，以及**兩個真實資料庫連線同時標記同一張訂單、金額加總會超過上限**的併發測試，確認剛好一筆成功、一筆被擋下，證明 `FOR UPDATE` 鎖真的序列化了併發寫入，不只是語法過關。migration 011 已套用到本機開發資料庫（純新增表，未改動既有資料）
   - 《審查》/security-review [待處理]
     > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。

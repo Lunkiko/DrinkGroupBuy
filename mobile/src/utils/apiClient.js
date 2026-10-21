@@ -567,11 +567,13 @@ export async function createMerchantRefundRequest(orderId, input) {
   return payload;
 }
 
-// Merchant direct refund: refunds the order at once (capped server-side at its remaining refundable amount).
-// `input.idempotencyKey` must stay the same across retries of one confirmed refund so a repeat never refunds twice.
-export async function refundMerchantOrder(orderId, input) {
+// Scheme B self-reported refund: records that the merchant refunded the customer themselves
+// (LINE Pay, cash, transfer -- the backend never calls a provider). Capped server-side at the
+// order's remaining refundable amount. `input.idempotencyKey` must stay the same across retries
+// of one confirmed mark so a repeat never marks twice.
+export async function markOrderRefunded(orderId, input) {
   const response = await fetch(
-    `${backendBaseUrl}/api/merchant/orders/${encodeURIComponent(orderId)}/refunds`,
+    `${backendBaseUrl}/api/merchant/orders/${encodeURIComponent(orderId)}/refund-marks`,
     {
       method: "POST",
       headers: withAuthHeaders({ "Content-Type": "application/json" }),
@@ -580,7 +582,26 @@ export async function refundMerchantOrder(orderId, input) {
   );
   const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(describeApiError(payload.error) ?? "Refund failed");
+    const error = new Error(describeApiError(payload.error) ?? "Marking this refund failed");
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+// Undoes a refund mark within its 24-hour window. Only the merchant who created the mark can revoke it.
+export async function revokeRefundMark(orderId, markId) {
+  const response = await fetch(
+    `${backendBaseUrl}/api/merchant/orders/${encodeURIComponent(orderId)}/refund-marks/${encodeURIComponent(markId)}/revoke`,
+    {
+      method: "POST",
+      headers: withAuthHeaders({ "Content-Type": "application/json" })
+    }
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(describeApiError(payload.error) ?? "Revoking this refund mark failed");
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -602,6 +623,22 @@ export async function listMerchantRefundRequests(storeId, input = {}) {
     throw error;
   }
   return payload.refundRequests;
+}
+
+export async function listMerchantRefundMarks(storeId, input = {}) {
+  const query = input.status ? `?status=${encodeURIComponent(input.status)}` : "";
+  const response = await fetch(
+    `${backendBaseUrl}/api/merchant/stores/${encodeURIComponent(storeId)}/refund-marks${query}`,
+    { headers: withAuthHeaders() }
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(describeApiError(payload.error) ?? "List refund marks failed");
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload.refundMarks;
 }
 
 async function postPickupRequest(path, body) {

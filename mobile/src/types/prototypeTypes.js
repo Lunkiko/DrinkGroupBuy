@@ -51,3 +51,8 @@ export const refundRequestStatusLabels = {
   approved: "已退款",
   rejected: "未退款"
 };
+
+export const refundMarkStatusLabels = {
+  active: "已標記退款",
+  revoked: "已撤銷"
+};
