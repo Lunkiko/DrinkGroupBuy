@@ -83,9 +83,12 @@ const { getPickupOverdueRule } = require("./payments/orderRuleConsent");
 const {
   approveRefundRequest,
   createMerchantRefundRequest,
-  refundOrderAsMerchant,
   rejectRefundRequest
 } = require("./payments/refundRequestService");
+const {
+  markOrderRefundedByMerchant,
+  revokeMerchantRefundMark
+} = require("./payments/merchantRefundMarkService");
 const {
   approveMerchantApplication,
   rejectMerchantApplication,
@@ -178,6 +181,9 @@ const {
 const {
   createPaymentRefundRepository
 } = require("./database/repositories/paymentRefundRepository");
+const {
+  createMerchantRefundMarkRepository
+} = require("./database/repositories/merchantRefundMarkRepository");
 const {
   createMerchantApplicationRepository
 } = require("./database/repositories/merchantApplicationRepository");
@@ -330,6 +336,8 @@ const paymentRefundRepository = createPaymentRefundRepository({
     getLatestProviderEventPayload: (value) => getLatestPaymentProviderEventPayload(value),
   },
 });
+// Postgres-only, no sqliteGateway -- see merchantRefundMarkRepository.js's module comment.
+const merchantRefundMarkRepository = createMerchantRefundMarkRepository({});
 // Postgres-only, no sqliteGateway -- see merchantApplicationRepository.js's module comment.
 const merchantApplicationRepository = createMerchantApplicationRepository({});
 // Postgres-only, no sqliteGateway -- see merchantMenuImportRepository.js's module comment.
@@ -1257,10 +1265,11 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    // Merchant direct refund: refunds the order right away (no admin review), capped at the order's remaining
-    // refundable amount. All permission, store-ownership and amount checks live in refundOrderAsMerchant.
-    const merchantDirectRefundMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refunds$/);
-    if (request.method === "POST" && merchantDirectRefundMatch) {
+    // Scheme B self-reported refund (2026-10-21): the merchant and customer settle the refund
+    // themselves; this never calls a provider, it only records what the merchant says happened.
+    // All permission, store-ownership and amount checks live in merchantRefundMarkService.
+    const markOrderRefundedMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-marks$/);
+    if (request.method === "POST" && markOrderRefundedMatch) {
       const authUser = await getAuthenticatedUser(request);
       if (!authUser) {
         sendJson(response, 401, { error: "Authentication required" });
@@ -1269,13 +1278,40 @@ const server = http.createServer(async (request, response) => {
 
       const body = await readJsonBody(request);
       try {
-        const result = await refundOrderAsMerchant({
+        const result = await markOrderRefundedByMerchant({
           authUser,
-          orderId: merchantDirectRefundMatch[1],
+          orderId: markOrderRefundedMatch[1],
           body,
-          paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined
+          merchantRefundMarkRepository
         });
         sendJson(response, result.idempotent ? 200 : 201, result);
+      } catch (error) {
+        if (error instanceof PaymentServiceError) {
+          sendJson(response, error.statusCode, error.payload);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    // Undo a refund mark within its 24-hour window -- see docs/payment-rules-and-flow.md "退款".
+    const revokeRefundMarkMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-marks\/([^/]+)\/revoke$/);
+    if (request.method === "POST" && revokeRefundMarkMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) {
+        sendJson(response, 401, { error: "Authentication required" });
+        return;
+      }
+
+      try {
+        const result = await revokeMerchantRefundMark({
+          authUser,
+          orderId: revokeRefundMarkMatch[1],
+          markId: revokeRefundMarkMatch[2],
+          merchantRefundMarkRepository
+        });
+        sendJson(response, 200, result);
       } catch (error) {
         if (error instanceof PaymentServiceError) {
           sendJson(response, error.statusCode, error.payload);
@@ -4700,7 +4736,8 @@ function isSqliteOrderDependentRoute(method, pathname) {
     || /^\/api\/merchant\/group-buy-activities\/[^/]+(?:\/orders\/[^/]+)?\/ready-for-pickup$/.test(pathname)
     || /^\/api\/admin\/group-buy-activities\/[^/]+\/settle$/.test(pathname)
     || /^\/api\/merchant\/orders\/[^/]+\/refund-requests$/.test(pathname)
-    || /^\/api\/merchant\/orders\/[^/]+\/refunds$/.test(pathname)
+    || /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
+    || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
     || /^\/api\/merchant\/stores\/[^/]+\/refund-requests$/.test(pathname)
     || pathname === "/api/admin/refund-requests"
     || /^\/api\/admin\/refund-requests\/[^/]+\/(approve|reject)$/.test(pathname)
@@ -4752,6 +4789,16 @@ function isSettlementRouteReadyForPostgres(method, pathname) {
     orderRevisionRepository.kind === "postgres"
     && method === "POST"
     && /^\/api\/orders\/[^/]+\/revisions$/.test(pathname)
+  ) {
+    return true;
+  }
+  if (
+    method === "POST"
+    && merchantRefundMarkRepository.kind === "postgres"
+    && (
+      /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
+      || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
+    )
   ) {
     return true;
   }

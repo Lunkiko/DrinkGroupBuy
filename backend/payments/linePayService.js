@@ -1190,13 +1190,6 @@ async function refundLinePayPayment(input = {}) {
   return runRefundWithOperationLock(input, () => refundLinePayPaymentUnlocked(input));
 }
 
-// The same refund for a caller that has already authorised the actor itself. The merchant direct refund
-// (refundRequestService.refundOrderAsMerchant) checks the merchant role, the store ownership and the
-// amount before calling this, so the admin-role check below is deliberately not repeated here.
-async function refundLinePayPaymentAuthorized(input = {}) {
-  return runRefundWithOperationLock(input, () => executeLinePayRefund(input));
-}
-
 async function runRefundWithOperationLock(input, operation) {
   const repository = input.paymentRefundRepository;
   const lockInput = {
@@ -1589,6 +1582,5 @@ module.exports = {
   requestManualLinePayRepayment,
   requestLinePayAuthorization,
   refundLinePayPayment,
-  refundLinePayPaymentAuthorized,
   voidLinePayAuthorization
 };

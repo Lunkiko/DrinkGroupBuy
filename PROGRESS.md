@@ -176,14 +176,13 @@ updated: 2026-10-21
   - 舊方案 A 直接退款實作 [已封存] (10/21) — 原本「商家按鈕→後端呼叫 LINE Pay 退款 API」的做法，已於同一天確定長期方向改走方案 B 後整支改寫；舊程式碼封存在 git tag `archive/merchant-refund-scheme-a`（commit `27b171e`），需要時可用 `git show archive/merchant-refund-scheme-a:<檔案路徑>` 取回單一檔案的舊內容
   - 《設計》退款記錄資料表 [完成] (10/21) — 新表 `merchant_refund_marks`（`database/migrations/011_merchant_refund_marks_postgres.sql`，同步加進 `database/schema.sql` 與 `docs/AI-database-field-spec.md`）；經 `backend-architect` 角色 Skill 審查後補強：`status`／`revoked_at`／`revoked_by_user_id` 一致性與「撤銷時間不晚於建立時間 24 小時」各有 CHECK constraint，`idempotency_key` 唯一範圍改成「同一商家內」（不是全域，避免重蹈 `refund_requests` 曾經出現的跨商家冪等鍵碰撞問題），並補上 `(order_id) WHERE status='active'` 的 partial index。已在一次性暫時 Postgres schema（`scripts/with-temp-schema.js`）裡驗證：migration 套用成功、4 種違規寫入（revoked 缺欄位、撤銷超過 24 小時、同商家重複 key、）皆被正確擋下，不同商家可重用相同 key 文字也驗證通過；驗證用的腳本是暫時檔案，驗證完已刪除，不是永久測試
     > 存放商家標記退款的紀錄：訂單、金額、原因、狀態（生效中／已撤銷）、誰標記的、什麼時候標記的。跟現有的退款申請表分開，不共用，避免影響既有待審申請。
-  - 《開發》Backend：標記與撤銷退款 [待處理]
+  - 《開發》Backend：標記與撤銷退款 [完成] (10/22) — 新增 `backend/database/repositories/merchantRefundMarkRepository.js`（Postgres-only，無 SQLite 相容路徑，比照 `merchantApplicationRepository.js` 的理由：這個表之前不存在、runtime 已永久切 PostgreSQL）與 `backend/payments/merchantRefundMarkService.js`；新路由 `POST /api/merchant/orders/:orderId/refund-marks`（標記）與 `POST /api/merchant/orders/:orderId/refund-marks/:markId/revoke`（撤銷），取代舊的 `POST .../refunds`。金額加總驗證在交易內對 `orders` 列下 `FOR UPDATE` 鎖後才計算，同一個鎖也跟請款／取消授權／退款這些既有付款生命週期操作互相序列化，不只是跟別的標記互相序列化。舊的 `refundOrderAsMerchant`（呼叫 LINE Pay refund API 那套）與其專用的 `refundLinePayPaymentAuthorized` 已整支移除（已封存，見上一項）；過程中發現並修正一個既有 bug——`refundRequestService.js` 的 `createMerchantRefundRequest` 組錯誤回應時，`...result` 展開順序在 `error` 欄位之後，會把看得懂的錯誤訊息蓋回原始代碼，手機端 `describeApiError` 的預設訊息因此一直是錯的；新舊兩處都已修正展開順序
     > 商家標記訂單退款、24 小時內撤銷標記的後端邏輯：金額不能超過訂單可退餘額、只能動自己門市的訂單、防止重複送出。
   - 《開發》Backend：統計改用即時加總 [待處理]
     > 商家營收等統計查詢，改成即時扣掉目前「生效中」的退款金額，不去改動團購結算當下留下的折扣快照。
   - 《開發》Mobile：商家退款畫面改版 [待處理]
-    > 退款確認視窗文字從「無法撤回」改成「24 小時內可撤銷」，新增撤銷退款的按鈕。
-  - 《測試》自動化測試與 Postgres 暫時 schema 測試 [待處理]
-    > 針對標記、撤銷、金額上限、權限這幾件事寫的自動化檢查。
+    > 退款確認視窗文字從「無法撤回」改成「24 小時內可撤銷」，新增撤銷退款的按鈕。**目前狀態**：手機端仍呼叫已移除的舊端點，這塊做完前退款功能在 App 上無法使用，不是可選的收尾。
+  - 《測試》自動化測試與 Postgres 暫時 schema 測試 [完成] (10/22) — 單元測試 `backend/payments/merchantRefundMarkService.test.js`（15 項，涵蓋角色/門市權限、金額與原因驗證、冪等重送、超額、撤銷擁有者、撤銷視窗、撤銷已撤銷的冪等行為、跨訂單/門市的 404），`npm test` 306/306 全過。真實 Postgres smoke `scripts/merchant-refund-mark-postgres-smoke.js`（`npm run merchant-refund-mark-postgres:smoke`）涵蓋標記、冪等、超額金額、跨門市拒絕、撤銷、非本人撤銷、撤銷逾期，以及**兩個真實資料庫連線同時標記同一張訂單、金額加總會超過上限**的併發測試，確認剛好一筆成功、一筆被擋下，證明 `FOR UPDATE` 鎖真的序列化了併發寫入，不只是語法過關。migration 011 已套用到本機開發資料庫（純新增表，未改動既有資料）
   - 《審查》/security-review [待處理]
     > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
   - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身，這次方案 B 改動不動這個頁面，繼續處理既有的待審申請
