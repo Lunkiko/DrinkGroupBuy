@@ -567,6 +567,27 @@ export async function createMerchantRefundRequest(orderId, input) {
   return payload;
 }
 
+// Merchant direct refund: refunds the order at once (capped server-side at its remaining refundable amount).
+// `input.idempotencyKey` must stay the same across retries of one confirmed refund so a repeat never refunds twice.
+export async function refundMerchantOrder(orderId, input) {
+  const response = await fetch(
+    `${backendBaseUrl}/api/merchant/orders/${encodeURIComponent(orderId)}/refunds`,
+    {
+      method: "POST",
+      headers: withAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(input)
+    }
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(describeApiError(payload.error) ?? "Refund failed");
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
 export async function listMerchantRefundRequests(storeId, input = {}) {
   const query = input.status ? `?status=${encodeURIComponent(input.status)}` : "";
   const response = await fetch(

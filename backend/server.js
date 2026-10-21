@@ -83,6 +83,7 @@ const { getPickupOverdueRule } = require("./payments/orderRuleConsent");
 const {
   approveRefundRequest,
   createMerchantRefundRequest,
+  refundOrderAsMerchant,
   rejectRefundRequest
 } = require("./payments/refundRequestService");
 const {
@@ -1246,6 +1247,35 @@ const server = http.createServer(async (request, response) => {
           paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined
         });
         sendJson(response, 201, result);
+      } catch (error) {
+        if (error instanceof PaymentServiceError) {
+          sendJson(response, error.statusCode, error.payload);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    // Merchant direct refund: refunds the order right away (no admin review), capped at the order's remaining
+    // refundable amount. All permission, store-ownership and amount checks live in refundOrderAsMerchant.
+    const merchantDirectRefundMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refunds$/);
+    if (request.method === "POST" && merchantDirectRefundMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) {
+        sendJson(response, 401, { error: "Authentication required" });
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      try {
+        const result = await refundOrderAsMerchant({
+          authUser,
+          orderId: merchantDirectRefundMatch[1],
+          body,
+          paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined
+        });
+        sendJson(response, result.idempotent ? 200 : 201, result);
       } catch (error) {
         if (error instanceof PaymentServiceError) {
           sendJson(response, error.statusCode, error.payload);
@@ -4670,6 +4700,7 @@ function isSqliteOrderDependentRoute(method, pathname) {
     || /^\/api\/merchant\/group-buy-activities\/[^/]+(?:\/orders\/[^/]+)?\/ready-for-pickup$/.test(pathname)
     || /^\/api\/admin\/group-buy-activities\/[^/]+\/settle$/.test(pathname)
     || /^\/api\/merchant\/orders\/[^/]+\/refund-requests$/.test(pathname)
+    || /^\/api\/merchant\/orders\/[^/]+\/refunds$/.test(pathname)
     || /^\/api\/merchant\/stores\/[^/]+\/refund-requests$/.test(pathname)
     || pathname === "/api/admin/refund-requests"
     || /^\/api\/admin\/refund-requests\/[^/]+\/(approve|reject)$/.test(pathname)

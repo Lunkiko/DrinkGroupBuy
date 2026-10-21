@@ -10,14 +10,18 @@ const { refundLinePayPayment } = require("../backend/payments/linePayService");
 const {
   approveRefundRequest,
   createMerchantRefundRequest,
+  refundOrderAsMerchant,
   rejectRefundRequest,
 } = require("../backend/payments/refundRequestService");
 
 const proofId = randomUUID();
 const activityId = `activity-refund-proof-${proofId}`;
+// The merchant-direct order sits in its own activity: a customer may have only one active order per activity.
+const activityIdMerchantDirect = `activity-refund-proof-merchant-direct-${proofId}`;
 const orderIdDirect = `order-refund-direct-${proofId}`;
 const orderIdApprove = `order-refund-approve-${proofId}`;
 const orderIdReject = `order-refund-reject-${proofId}`;
+const orderIdMerchantDirect = `order-refund-merchant-direct-${proofId}`;
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -169,7 +173,81 @@ async function main() {
     const adminApprovedList = await paymentRefundRepository.listRefundRequestsForAdmin({ status: "approved" });
     assert.ok(adminApprovedList.some((item) => item.id === createdRequest.refundRequest.id));
 
-    console.log("PostgreSQL payment refund direct/idempotency/lock/request-workflow proof passed.");
+    // 8. Merchant direct refund (no admin step): a partial refund ends approved, the order stays captured.
+    const directKey = `merchant-direct-key-${proofId}`;
+    const merchantDirect = await refundOrderAsMerchant({
+      authUser: merchantUser,
+      orderId: orderIdMerchantDirect,
+      body: { requestedAmount: 40, reason: "postgres_proof_merchant_direct", idempotencyKey: directKey },
+      paymentRefundRepository,
+    });
+    assert.equal(merchantDirect.refundRequest.status, "approved");
+    assert.equal(merchantDirect.refund.refund.refundAmount, 40);
+    assert.equal(merchantDirect.refund.fullyRefunded, false);
+    assert.equal(merchantDirect.refundRequest.resultingPaymentRefundId, merchantDirect.refund.refund.id);
+    const merchantDirectOrder = await database.query("SELECT payment_status FROM orders WHERE id = $1", [orderIdMerchantDirect]);
+    assert.equal(merchantDirectOrder.rows[0].payment_status, "captured");
+
+    // 9. The same key again returns the first result and refunds nothing more.
+    const merchantDirectRepeat = await refundOrderAsMerchant({
+      authUser: merchantUser,
+      orderId: orderIdMerchantDirect,
+      body: { requestedAmount: 40, reason: "postgres_proof_merchant_direct", idempotencyKey: directKey },
+      paymentRefundRepository,
+    });
+    assert.equal(merchantDirectRepeat.idempotent, true);
+    const directRefundCount = await database.query(
+      "SELECT COUNT(*)::integer AS count FROM payment_refunds WHERE order_id = $1", [orderIdMerchantDirect]
+    );
+    assert.equal(directRefundCount.rows[0].count, 1, "a repeated key must not create a second refund");
+
+    // 10. The cap: 50 is left, so 51 is refused and no refund row or request row is created for it.
+    let overCapError = null;
+    try {
+      await refundOrderAsMerchant({
+        authUser: merchantUser,
+        orderId: orderIdMerchantDirect,
+        body: { requestedAmount: 51, reason: "postgres_proof_over_cap", idempotencyKey: `over-cap-key-${proofId}` },
+        paymentRefundRepository,
+      });
+    } catch (error) {
+      overCapError = error;
+    }
+    assert.ok(overCapError, "a refund above the remaining refundable amount should throw");
+    assert.equal(overCapError.payload?.status, "refund_amount_exceeds_remaining_amount");
+    assert.equal(overCapError.payload?.remainingRefundableAmount, 50);
+    const afterOverCap = await database.query(
+      "SELECT (SELECT COUNT(*)::integer FROM payment_refunds WHERE order_id = $1) AS refunds, "
+      + "(SELECT COUNT(*)::integer FROM refund_requests WHERE order_id = $1) AS requests", [orderIdMerchantDirect]
+    );
+    assert.deepEqual(afterOverCap.rows[0], { refunds: 1, requests: 1 });
+
+    // 11. A merchant of another store cannot refund this store's order.
+    let otherStoreError = null;
+    try {
+      await refundOrderAsMerchant({
+        authUser: { ...merchantUser, merchantStores: [{ id: "store-not-this-one" }] },
+        orderId: orderIdMerchantDirect,
+        body: { requestedAmount: 10, reason: "postgres_proof_wrong_store", idempotencyKey: `wrong-store-key-${proofId}` },
+        paymentRefundRepository,
+      });
+    } catch (error) {
+      otherStoreError = error;
+    }
+    assert.equal(otherStoreError?.statusCode, 403);
+
+    // 12. Refunding exactly what is left flips the order to refunded.
+    const merchantDirectRest = await refundOrderAsMerchant({
+      authUser: merchantUser,
+      orderId: orderIdMerchantDirect,
+      body: { requestedAmount: 50, reason: "postgres_proof_rest", idempotencyKey: `rest-key-${proofId}` },
+      paymentRefundRepository,
+    });
+    assert.equal(merchantDirectRest.refund.fullyRefunded, true);
+    const merchantDirectFinal = await database.query("SELECT payment_status FROM orders WHERE id = $1", [orderIdMerchantDirect]);
+    assert.equal(merchantDirectFinal.rows[0].payment_status, "refunded");
+
+    console.log("PostgreSQL payment refund direct/idempotency/lock/request-workflow/merchant-direct proof passed.");
   } finally {
     await cleanup(database);
     await database.close();
@@ -212,10 +290,21 @@ async function createFixture(database) {
     `, [activityId, merchantUserId, start.toISOString(), deadline.toISOString(),
       pickupStart.toISOString(), pickupEnd.toISOString()]);
 
+    await transaction.query(`
+      INSERT INTO group_buy_activities (
+        id, store_id, created_by_user_id, title, status,
+        start_at, deadline_at, pickup_start_at, pickup_end_at,
+        maximum_cups, withdrawal_lock_minutes, created_at, updated_at
+      ) VALUES ($1, 'store-001', $2, 'PostgreSQL Refund Proof (merchant direct)', 'ready_for_pickup',
+                $3, $4, $5, $6, 3, 30, $4, $4)
+    `, [activityIdMerchantDirect, merchantUserId, start.toISOString(), deadline.toISOString(),
+      pickupStart.toISOString(), pickupEnd.toISOString()]);
+
     const orders = [
-      { id: orderIdDirect, customerId: customersResult.rows[0].id, amount: 80 },
-      { id: orderIdApprove, customerId: customersResult.rows[1].id, amount: 60 },
-      { id: orderIdReject, customerId: customersResult.rows[2].id, amount: 50 },
+      { id: orderIdDirect, activityId, customerId: customersResult.rows[0].id, amount: 80 },
+      { id: orderIdApprove, activityId, customerId: customersResult.rows[1].id, amount: 60 },
+      { id: orderIdReject, activityId, customerId: customersResult.rows[2].id, amount: 50 },
+      { id: orderIdMerchantDirect, activityId: activityIdMerchantDirect, customerId: customersResult.rows[0].id, amount: 90 },
     ];
     for (const order of orders) {
       await transaction.query(`
@@ -226,7 +315,7 @@ async function createFixture(database) {
           submitted_at, updated_at
         ) VALUES ($1, $2, $3, 'submitted', 'decline_original_price',
                   1, $4, $4, 'captured', 'captured', 'accepted', 'not_ready', $5, $5)
-      `, [order.id, activityId, order.customerId, order.amount, now.toISOString()]);
+      `, [order.id, order.activityId, order.customerId, order.amount, now.toISOString()]);
 
       const authorizationId = `payment-authorization-refund-proof-${order.id}`;
       await transaction.query(`
@@ -253,8 +342,8 @@ async function createFixture(database) {
 }
 
 async function cleanup(database) {
-  const activityIds = [activityId];
-  const orderIds = [orderIdDirect, orderIdApprove, orderIdReject];
+  const activityIds = [activityId, activityIdMerchantDirect];
+  const orderIds = [orderIdDirect, orderIdApprove, orderIdReject, orderIdMerchantDirect];
   await database.transaction(async (transaction) => {
     // audit_logs.metadata_json doesn't carry orderId for every action type (approve/reject
     // don't, matching the original SQLite shape), so resolve the actual refund/request ids

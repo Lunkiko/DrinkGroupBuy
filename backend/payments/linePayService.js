@@ -1185,12 +1185,23 @@ async function captureLinePayAuthorizationUnlocked({
   };
 }
 
+// Admin entry point for a refund.
 async function refundLinePayPayment(input = {}) {
+  return runRefundWithOperationLock(input, () => refundLinePayPaymentUnlocked(input));
+}
+
+// The same refund for a caller that has already authorised the actor itself. The merchant direct refund
+// (refundRequestService.refundOrderAsMerchant) checks the merchant role, the store ownership and the
+// amount before calling this, so the admin-role check below is deliberately not repeated here.
+async function refundLinePayPaymentAuthorized(input = {}) {
+  return runRefundWithOperationLock(input, () => executeLinePayRefund(input));
+}
+
+async function runRefundWithOperationLock(input, operation) {
   const repository = input.paymentRefundRepository;
   const lockInput = {
     orderId: input.body?.orderId || input.body?.paymentCaptureId || input.body?.providerTransactionId
   };
-  const operation = () => refundLinePayPaymentUnlocked(input);
   if (repository?.kind === "postgres") {
     try {
       return await repository.withOperationLock(lockInput, operation);
@@ -1209,10 +1220,14 @@ async function refundLinePayPayment(input = {}) {
   return withLinePayOperationLock(lockInput, operation);
 }
 
-async function refundLinePayPaymentUnlocked({ authUser, body, paymentRefundRepository } = {}) {
-  if (!authUser?.roles?.includes("admin")) {
+async function refundLinePayPaymentUnlocked(input = {}) {
+  if (!input.authUser?.roles?.includes("admin")) {
     throw new PaymentServiceError(403, { error: "Admin role required" });
   }
+  return executeLinePayRefund(input);
+}
+
+async function executeLinePayRefund({ authUser, body, paymentRefundRepository } = {}) {
   if (!body?.orderId && !body?.captureId && !body?.providerTransactionId) {
     throw new PaymentServiceError(400, {
       error: "Missing required field: orderId, captureId, or providerTransactionId"
@@ -1574,5 +1589,6 @@ module.exports = {
   requestManualLinePayRepayment,
   requestLinePayAuthorization,
   refundLinePayPayment,
+  refundLinePayPaymentAuthorized,
   voidLinePayAuthorization
 };

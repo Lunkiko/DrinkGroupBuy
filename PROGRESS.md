@@ -12,7 +12,7 @@ updated: 2026-10-17
 - 商家建立與取消團購活動
 - 商家管理店內菜單
 - 商家標記訂單可取餐、查看待製作明細
-- 商家申請退款
+- 商家直接退款（單筆不得超過該單剩餘可退金額，送出前有確認視窗）
 - 管理員網頁後台審核退款、取消團購、審核商家申請
 - 管理員在網頁後台切換已註冊帳號的顧客／商家使用角色
 - 系統截止結算（折扣試算、正式請款）
@@ -171,12 +171,12 @@ updated: 2026-10-17
       > 一個可以快速執行的自動化檢查腳本，用來確認付款結算功能的核心流程沒有壞掉。
     - 正式告警通知管道 [完成] (8/24) — 新增 `backend/payments/alertNotifier.js`，LINE Pay 對帳排程與結算排程在既有的結構化警示日誌之外，同步呼叫可設定的 `ALERT_WEBHOOK_URL`（通用 webhook，Slack／Discord／Mattermost 的 incoming webhook 都吃同樣的 JSON 格式；不設定就完全不送、不報錯，sandbox/dev 環境本來就不會設）；排程本身丟例外（整個排程掛掉，不是單一工作失敗）也會觸發同一支通知。`/security-review` 抓到一個中風險問題並已修：結算排程失敗時原本會把整個團購活動所有訂單的明細（顧客 ID、金流交易序號、金額）原封不動送到外部 webhook，現在送出前會摘要化成筆數，不再外流逐筆明細。7 個單元測試（含這次修復的驗證）與既有測試共 77/77 全數通過，詳見 `docs/AI-security-review-log.md` 2026-08-24 追加的那筆
       > 上面提到的警示日誌，原本只會寫進系統紀錄裡，要有人自己去翻才看得到；現在補上一個可以接 Slack 之類工具的管道，出事會主動推播，不用等人發現。
-- 商家退款申請 [進行中]
-  > 顧客要退款時，由商家在後台提出退款申請，經過審核（核准或駁回）才會真的退錢，不是顧客自己就能直接退款。
-  - Backend 端 [完成] (8/4) — 申請／審核 API（pending/approved/rejected），`npm run refund-request:smoke` 涵蓋申請、重複阻擋、核准、駁回
-  - Mobile 端：商家申請 UI [進行中] — `MerchantRefundRequestsScreen` 已接 API 且 navigation 可到達；尚未有 Android／真實 provider E2E 證據
-    > 商家在後台看到、提出退款申請的畫面。
-  - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身
+- 商家退款 [進行中]
+  > 顧客要退款時，由商家在 App 的「退款」畫面直接退給顧客，不用等營運審核；單筆不能超過該單剩餘可退金額，按下去之前會先跳出確認視窗。顧客自己不能退款。
+  - Backend 端 [完成] (10/21) — 新增 `POST /api/merchant/orders/:orderId/refunds`（商家直接退款，取代原本申請後由營運審核）：金額上限、商家與門市權限、冪等鍵（必填，且同 key 不能用在別的訂單／金額／商家）都在後端檢查；沿用 `refund_requests` 當帳本（`pending`→`approved`／`rejected`），退款冪等鍵與管理員核准相同，所以管理員之後再核准同一筆不會重複退款。底層退款函式拆成「管理員入口」與「已授權入口」兩段，管理員那條路行為不變。8 個單元測試（`backend/payments/merchantDirectRefund.test.js`）與 `npm run test:db` 風格的 Postgres 暫時 schema 測試（`payment-refund-postgres-smoke.js` 新增商家直接退款、冪等、超額、跨門市、全額退款五個情境）通過；舊的申請／審核 API 保留。尚無每日上限、異常自動暫停與真實 LINE Pay sandbox 人工端對端證據，安全審查見 `docs/AI-security-review-log.md` 2026-10-21 那筆
+  - Mobile 端：商家退款 UI [進行中] — `MerchantRefundRequestsScreen` 改成「退款」：輸入金額與原因 → 確認視窗（顯示金額、訂單、原因與「無法撤回」）→ 確認後才送出；送出中按鈕停用，失敗時視窗保持開啟並用同一把冪等鍵重試。已在網頁展示模式用暫時假資料看過成功、超額與前端上限三個畫面（假資料已移除）；尚未有 Android 實機或真實 provider E2E 證據
+    > 商家選一筆已請款的訂單、填金額和原因、在確認視窗按下確認後退款的畫面。
+  - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身。10/21 起商家改為直接退款，這個頁面只用來處理既有的待審申請與事後查看
     > 平台營運人員審核退款申請、決定核准或駁回的網頁畫面，跟顧客/商家用的手機 App 是分開的。
 
 ## 訂單流程 [進行中]
