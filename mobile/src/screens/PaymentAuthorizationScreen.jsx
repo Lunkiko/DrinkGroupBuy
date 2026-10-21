@@ -10,6 +10,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { ValueRow } from "../components/ValueRow";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency } from "../utils/calculations";
+import { isDemoMode } from "../utils/demoMode";
 import { getManualRepaymentStateInfo } from "../utils/manualRepayment";
 import {
   getPickupOverdueRule,
@@ -39,6 +40,8 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
   const [pickupRuleMessage, setPickupRuleMessage] = useState("");
   const [pickupRuleReloadKey, setPickupRuleReloadKey] = useState(0);
   const [pickupRuleContentExpanded, setPickupRuleContentExpanded] = useState(false);
+  const [demoLinePayOpen, setDemoLinePayOpen] = useState(false);
+  const demoCheckoutPreview = isDemoMode() && route.params?.demoCheckoutPreview === true;
   const pollIntervalRef = useRef(null);
   const pollTimeoutRef = useRef(null);
   const pollInFlightRef = useRef(false);
@@ -47,14 +50,14 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     ?? appState.paymentAuthorizations.find((item) => allowedOrderIds.has(item.orderId));
   const order = payment ? appState.orders.find((item) => item.id === payment.orderId) : null;
   const needsPickupRuleConsent = Boolean(
-    payment
+    demoCheckoutPreview || (payment
     && route.params?.mode !== "manualRepayment"
     && payment.paymentStatus !== "failed"
     && order?.paymentStatus !== "failed"
     && payment.paymentStatus !== "authorized"
     && payment.status !== "authorized"
     && payment.paymentStatus !== "captured"
-    && payment.status !== "captured"
+    && payment.status !== "captured")
   );
   const paymentCompleted = payment?.paymentStatus === "authorized"
     || payment?.status === "authorized"
@@ -63,9 +66,9 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
 
   useEffect(() => {
     const returnedFromLinePay = ["authorized", "captured"].includes(route.params?.linePayResultStatus);
-    if (!paymentCompleted || (!returnedFromLinePay && linePayStatus !== "ready")) return;
+    if (demoCheckoutPreview || !paymentCompleted || (!returnedFromLinePay && linePayStatus !== "ready")) return;
     navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: payment.orderId } });
-  }, [paymentCompleted, payment?.orderId, route.params?.linePayResultStatus, linePayStatus, navigation]);
+  }, [demoCheckoutPreview, paymentCompleted, payment?.orderId, route.params?.linePayResultStatus, linePayStatus, navigation]);
 
   useEffect(() => () => {
     stopLinePaySyncPolling({ pollIntervalRef, pollTimeoutRef });
@@ -73,6 +76,16 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
 
   useEffect(() => {
     if (!payment) return undefined;
+    if (demoCheckoutPreview) {
+      setPickupRule({
+        ruleType: "pickup_overdue",
+        ruleVersion: "demo",
+        title: "取餐與逾期未取規則（展示資料）",
+        content: "請在活動指定的取餐時段到店，出示六位取餐碼。逾期未取的處理依店家與活動規則辦理。"
+      });
+      setPickupRuleStatus("ready");
+      return undefined;
+    }
     let active = true;
     setPickupRuleStatus("loading");
     setPickupRuleMessage("");
@@ -93,7 +106,7 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     return () => {
       active = false;
     };
-  }, [payment?.orderId, pickupRuleReloadKey]);
+  }, [demoCheckoutPreview, payment?.orderId, pickupRuleReloadKey]);
 
   useEffect(() => {
     if (!payment?.orderId) return undefined;
@@ -142,8 +155,8 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
     );
   }
 
-  const isAuthorized = payment.paymentStatus === "authorized" || payment.status === "authorized";
-  const isCaptured = payment.paymentStatus === "captured" || payment.status === "captured";
+  const isAuthorized = !demoCheckoutPreview && (payment.paymentStatus === "authorized" || payment.status === "authorized");
+  const isCaptured = !demoCheckoutPreview && (payment.paymentStatus === "captured" || payment.status === "captured");
   const isManualRepayment = route.params?.mode === "manualRepayment"
     || payment.paymentStatus === "failed"
     || order?.paymentStatus === "failed";
@@ -156,6 +169,24 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
   const settledDiscount = isManualRepayment
     ? Math.max(0, payment.originalAmount - displayedAmount)
     : isCaptured ? Math.max(0, payment.originalAmount - (payment.captureAmount ?? payment.originalAmount)) : 0;
+
+  if (demoLinePayOpen) {
+    return (
+      <MobileScreen title="LINE Pay" onBack={() => setDemoLinePayOpen(false)}>
+        <Section title="展示付款流程">
+          <Card style={styles.statusCard}>
+            <Text style={styles.providerName}>LINE Pay（展示模式）</Text>
+            <Text style={styles.meta}>應付金額 {formatCurrency(displayedAmount)}</Text>
+            <Text style={styles.meta}>這是網頁預覽的模擬步驟，不會連接 LINE Pay 或產生實際付款。</Text>
+          </Card>
+        </Section>
+        <PrimaryButton
+          label="完成模擬付款並查看訂單"
+          onPress={() => navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: payment.orderId } })}
+        />
+      </MobileScreen>
+    );
+  }
 
   return (
     <MobileScreen
@@ -264,6 +295,10 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
                   || repaymentState?.disabled
                   || (needsPickupRuleConsent && pickupRuleStatus !== "ready")
                 ) return;
+                if (demoCheckoutPreview) {
+                  setDemoLinePayOpen(true);
+                  return;
+                }
                 const startPayment = isManualRepayment ? startLinePayRepayment : startPaymentAuthorization;
                 startPayment({
                   payment,

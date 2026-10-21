@@ -214,24 +214,17 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
               return;
             }
             const orderId = typeof submitResult === "string" ? submitResult : submitResult?.orderId;
-            if (orderId && isDemoMode()) {
-              // No real LINE Pay to authorize against -- this existing local-only action (built for
-              // early prototyping, before the real LINE Pay integration) marks the order paid
-              // directly, so demo mode can skip the payment screen and still show a completed order.
-              // A brand-new order was already authorized inside submitCart; this re-applies the same
-              // state (a no-op for it) and covers a revised or updated existing order.
-              actions.authorizeLinePayPayment(orderId);
-              // "customerOrders" lives in OrdersStack, a sibling tab's nested stack (CustomerTabs.jsx)
-              // -- not reachable with push(), which only targets the current stack (cart is in
-              // HomeStack). navigate()'s { screen, params } form is how React Navigation crosses into
-              // another tab's nested screen.
-              navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId } });
-              return;
-            }
             const orderRevisionId = typeof submitResult === "object" ? submitResult.orderRevisionId : null;
             const revisionAmount = typeof submitResult === "object" ? submitResult.revisionAmount : null;
             const revisionItems = typeof submitResult === "object" ? submitResult.revisionItems : null;
-            if (orderId) navigation.push("paymentAuthorization", { groupBuyActivityId: groupBuyActivity.id, orderId, orderRevisionId, revisionAmount, revisionItems });
+            if (orderId) navigation.push("paymentAuthorization", {
+              groupBuyActivityId: groupBuyActivity.id,
+              orderId,
+              orderRevisionId,
+              revisionAmount,
+              revisionItems,
+              demoCheckoutPreview: isDemoMode()
+            });
           } finally {
             setIsSubmitting(false);
           }
