@@ -22,6 +22,10 @@ const activityId = `activity-refund-proof-${proofId}`;
 const orderIdDirect = `order-refund-direct-${proofId}`;
 const orderIdApprove = `order-refund-approve-${proofId}`;
 const orderIdReject = `order-refund-reject-${proofId}`;
+// Its own activity (not the shared one above) so it can reuse an existing customer without
+// tripping idx_orders_one_active_per_customer_activity (one active order per customer per activity).
+const activityIdCrossSource = `activity-refund-cross-source-proof-${proofId}`;
+const orderIdCrossSource = `order-refund-cross-source-${proofId}`;
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -173,7 +177,36 @@ async function main() {
     const adminApprovedList = await paymentRefundRepository.listRefundRequestsForAdmin({ status: "approved" });
     assert.ok(adminApprovedList.some((item) => item.id === createdRequest.refundRequest.id));
 
-    console.log("PostgreSQL payment refund direct/idempotency/lock/request-workflow proof passed.");
+    // 8. Cross-source cap: order final_amount/capture_amount is 100, and a merchant_refund_mark
+    // already marked 40 of it as actively refunded via the self-reported scheme-B path (which
+    // never touches payment_status/payment_refunds). A direct provider refund of 70 must be
+    // refused against the correctly-reduced remaining amount (60), and a refund of exactly 60
+    // must succeed -- proving createPendingRefundPostgres's cap now also subtracts
+    // merchant_refund_marks, not just other payment_refunds rows (2026-10-22 /code-review finding
+    // on adminStatisticsRepository.js, which first surfaced this gap).
+    let crossSourceOverCapError = null;
+    try {
+      await refundLinePayPayment({
+        authUser: adminUser,
+        body: { orderId: orderIdCrossSource, provider: "mock_line_pay", refundAmount: 70 },
+        paymentRefundRepository,
+      });
+    } catch (error) {
+      crossSourceOverCapError = error;
+    }
+    assert.equal(crossSourceOverCapError?.payload?.status, "refund_amount_exceeds_remaining_amount");
+    assert.equal(crossSourceOverCapError?.payload?.remainingRefundableAmount, 60,
+      "the cap must subtract the existing active merchant_refund_marks row, not just other payment_refunds rows");
+
+    const crossSourceRefund = await refundLinePayPayment({
+      authUser: adminUser,
+      body: { orderId: orderIdCrossSource, provider: "mock_line_pay", refundAmount: 60 },
+      paymentRefundRepository,
+    });
+    assert.equal(crossSourceRefund.status, "refunded");
+    assert.equal(crossSourceRefund.refund.refundAmount, 60);
+
+    console.log("PostgreSQL payment refund direct/idempotency/lock/request-workflow/cross-source proof passed.");
   } finally {
     await cleanup(database);
     await database.close();
@@ -251,14 +284,61 @@ async function createFixture(database) {
         ) VALUES ($1, $2, $3, 'captured', $4, $4, 0, $5, $5, $5)
       `, [captureId, authorizationId, order.id, order.amount, now.toISOString()]);
     }
+
+    // Cross-source fixture, on its own activity so it can reuse an existing customer (see the
+    // constant's own comment above).
+    await transaction.query(`
+      INSERT INTO group_buy_activities (
+        id, store_id, created_by_user_id, title, status,
+        start_at, deadline_at, pickup_start_at, pickup_end_at,
+        maximum_cups, withdrawal_lock_minutes, created_at, updated_at
+      ) VALUES ($1, 'store-001', $2, 'PostgreSQL Refund Cross-Source Proof', 'ready_for_pickup',
+                $3, $4, $5, $6, 3, 30, $4, $4)
+    `, [activityIdCrossSource, merchantUserId, start.toISOString(), deadline.toISOString(),
+      pickupStart.toISOString(), pickupEnd.toISOString()]);
+    await transaction.query(`
+      INSERT INTO orders (
+        id, activity_id, customer_user_id, status, fallback_purchase_preference,
+        total_cups, original_amount, final_amount, payment_status,
+        authorization_status, merchant_acceptance_status, pickup_status,
+        submitted_at, updated_at
+      ) VALUES ($1, $2, $3, 'submitted', 'decline_original_price',
+                1, 100, 100, 'captured', 'captured', 'accepted', 'not_ready', $4, $4)
+    `, [orderIdCrossSource, activityIdCrossSource, customersResult.rows[0].id, now.toISOString()]);
+    const crossSourceAuthorizationId = `payment-authorization-refund-cross-source-proof-${proofId}`;
+    await transaction.query(`
+      INSERT INTO payment_authorizations (
+        id, order_id, provider, payment_flow, status,
+        original_amount, authorized_amount, provider_authorization_id,
+        authorized_at, created_at, updated_at
+      ) VALUES ($1, $2, 'mock_line_pay', 'authorization', 'captured',
+                100, 100, $3, $4, $4, $4)
+    `, [crossSourceAuthorizationId, orderIdCrossSource, `mock-txn-cross-source-${proofId}`, now.toISOString()]);
+    const crossSourceCaptureId = `payment-capture-refund-cross-source-proof-${proofId}`;
+    await transaction.query(`
+      INSERT INTO payment_captures (
+        id, payment_authorization_id, order_id, status,
+        final_amount, capture_amount, released_amount,
+        captured_at, created_at, updated_at
+      ) VALUES ($1, $2, $3, 'captured', 100, 100, 0, $4, $4, $4)
+    `, [crossSourceCaptureId, crossSourceAuthorizationId, orderIdCrossSource, now.toISOString()]);
+    // The merchant self-reported scheme-B path already marked 40 of this order as actively
+    // refunded -- payment_status/payment_refunds are untouched by that path, exactly like a real
+    // merchant-marked refund would leave them.
+    await transaction.query(`
+      INSERT INTO merchant_refund_marks (
+        id, order_id, store_id, marked_by_user_id, amount, reason, status, idempotency_key, created_at, updated_at
+      ) VALUES ($1, $2, 'store-001', $3, 40, 'postgres_proof_cross_source_mark', 'active', $4, $5, $5)
+    `, [`merchant-refund-mark-cross-source-proof-${proofId}`, orderIdCrossSource, merchantUserId,
+      `cross-source-mark-${proofId}`, now.toISOString()]);
   });
 
   return { merchantUserId };
 }
 
 async function cleanup(database) {
-  const activityIds = [activityId];
-  const orderIds = [orderIdDirect, orderIdApprove, orderIdReject];
+  const activityIds = [activityId, activityIdCrossSource];
+  const orderIds = [orderIdDirect, orderIdApprove, orderIdReject, orderIdCrossSource];
   await database.transaction(async (transaction) => {
     // audit_logs.metadata_json doesn't carry orderId for every action type (approve/reject
     // don't, matching the original SQLite shape), so resolve the actual refund/request ids
@@ -281,6 +361,7 @@ async function cleanup(database) {
       );
     }
     await transaction.query("DELETE FROM refund_requests WHERE order_id = ANY($1::text[])", [orderIds]);
+    await transaction.query("DELETE FROM merchant_refund_marks WHERE order_id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM payment_refunds WHERE order_id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM payment_captures WHERE order_id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM payment_authorizations WHERE order_id = ANY($1::text[])", [orderIds]);
@@ -299,6 +380,7 @@ async function cleanup(database) {
       (SELECT COUNT(*)::integer FROM orders WHERE id = ANY($2::text[])) AS order_count,
       (SELECT COUNT(*)::integer FROM payment_refunds WHERE order_id = ANY($2::text[])) AS refund_count,
       (SELECT COUNT(*)::integer FROM refund_requests WHERE order_id = ANY($2::text[])) AS refund_request_count,
+      (SELECT COUNT(*)::integer FROM merchant_refund_marks WHERE order_id = ANY($2::text[])) AS refund_mark_count,
       (SELECT COUNT(*)::integer FROM operation_locks WHERE lock_key LIKE '%' || $3 || '%') AS lock_count
   `, [activityIds, orderIds, proofId]);
   assert.deepEqual(residue.rows[0], {
@@ -306,6 +388,7 @@ async function cleanup(database) {
     order_count: 0,
     refund_count: 0,
     refund_request_count: 0,
+    refund_mark_count: 0,
     lock_count: 0,
   });
 }

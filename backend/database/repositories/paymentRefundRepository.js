@@ -76,7 +76,11 @@ async function createPendingRefundPostgres(database, input = {}) {
     if (!capturedPayment) return { error: "captured_payment_not_found" };
 
     const refundedAmount = await getRefundedAmountForCapturePostgres(transaction, capturedPayment.capture_id);
-    const remainingRefundableAmount = Math.max(capturedPayment.capture_amount - refundedAmount, 0);
+    // Also caps against merchant_refund_marks (the self-reported scheme-B path) -- see the matching
+    // comment in merchantRefundMarkRepository.js's createRefundMarkPostgres for why both refund
+    // sources must check each other's total, not just their own.
+    const markRefundedAmount = await getActiveMarkTotalForOrderPostgres(transaction, capturedPayment.order_id);
+    const remainingRefundableAmount = Math.max(capturedPayment.capture_amount - refundedAmount - markRefundedAmount, 0);
     const refundAmount = requestedRefundAmount == null
       ? remainingRefundableAmount
       : Number(requestedRefundAmount);
@@ -326,7 +330,8 @@ async function createRefundRequestPostgres(database, input = {}) {
       }
 
       const refundedAmount = await getRefundedAmountForCapturePostgres(transaction, capturedPayment.capture_id);
-      const remainingRefundableAmount = Math.max(capturedPayment.capture_amount - refundedAmount, 0);
+      const markRefundedAmount = await getActiveMarkTotalForOrderPostgres(transaction, input.orderId);
+      const remainingRefundableAmount = Math.max(capturedPayment.capture_amount - refundedAmount - markRefundedAmount, 0);
       if (remainingRefundableAmount <= 0) {
         return { error: "already_fully_refunded", remainingRefundableAmount: 0 };
       }
@@ -625,6 +630,18 @@ async function getRefundedAmountForCapturePostgres(database, captureId) {
     WHERE payment_capture_id = $1 AND status = 'refunded'
   `, [captureId]);
   return Number(result.rows[0]?.refunded_amount || 0);
+}
+
+// Mirrors getRefundedAmountForCapturePostgres above, but against the OTHER refund source
+// (merchant_refund_marks, scheme B's self-reported path) -- see createPendingRefundPostgres's and
+// createRefundRequestPostgres's own comments on why this project's refund cap must check both.
+async function getActiveMarkTotalForOrderPostgres(database, orderId) {
+  const result = await database.query(`
+    SELECT COALESCE(SUM(amount), 0)::integer AS active_mark_total
+    FROM merchant_refund_marks
+    WHERE order_id = $1 AND status = 'active'
+  `, [orderId]);
+  return Number(result.rows[0]?.active_mark_total || 0);
 }
 
 // NOTE: the SQLite version's buildRefundResult embeds the *full* getOrderDetail() output

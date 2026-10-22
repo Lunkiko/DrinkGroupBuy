@@ -1839,3 +1839,26 @@
 ### 驗證
 
 單元測試 9/9（新增 2 項，驗證兩條查詢的退款 netting SQL 形狀與既有的「直接映射」行為），`npm test` 316/316 全過。真實 Postgres smoke `admin-statistics-postgres:smoke` 新增一段：對一筆已請款訂單標記 $20 自報退款，確認平台總營收的變動量確實扣掉這 $20（而不是算進毛額），驗證通過。
+
+---
+
+## 2026-10-22 -- /code-review 發現修復：退款跨來源上限檢查、負數營收顯示、統計標籤，金流改動
+
+**範圍**：`backend/database/repositories/merchantRefundMarkRepository.js`、`backend/database/repositories/paymentRefundRepository.js`、`backend/server.js`（`formatAdminCurrency` 與 admin statistics 頁面標籤）、`scripts/merchant-refund-mark-postgres-smoke.js`、`scripts/payment-refund-postgres-smoke.js`。
+**呼應**：同一天 `/code-review medium` 對上一筆（adminStatisticsRepository.js 退款統計缺口）commit 跑出的 4 個 CONFIRMED 發現中的前 3 個；第 4 個（退款扣除 SQL 手法複製 3 次）依審查者自己的建議「等真的要加第 4 份再抽」不處理。這次確認是否解決：**已解決**。
+**觸發原因**：`AGENTS.md` 規定金流改動完成後要複查並記錄；這次修補商家自報退款（`merchant_refund_marks`）跟管理員審核退款（`payment_refunds`）互相沒檢查對方金額的缺口——理論上同一張訂單可以兩邊各退到全額，這個缺口原本存在但沒有被看見，直到 adminStatisticsRepository.js 開始把兩個來源一起扣，才第一次把它顯示成負數營收。
+
+**方法**：獨立審查者（subagent）讀完整改動，針對新查詢的 SQL injection、授權有沒有退化、兩條路徑各自上鎖（`orders` 列 vs `capture` 列）造成的殘留併發風險逐一檢查；我自己覆核。
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| SQL injection | 兩個新的交叉檢查查詢（`merchantRefundMarkRepository.js` 的 `refundTotalsResult`、`paymentRefundRepository.js` 的 `getActiveMarkTotalForOrderPostgres`）全部用 `$1` 參數化，沒有字串拼接。 |
+| 授權 | 純粹是上限計算邏輯改動，沒有新增、移除或放寬任何授權／角色／門市歸屬檢查。 |
+| 併發殘留風險 | `createRefundMarkPostgres` 鎖 `orders` 列，`createPendingRefundPostgres`／`createRefundRequestPostgres` 鎖 `capture` 列——兩個不同的列，所以兩條路徑的交叉檢查讀取對方資料表時不會互相鎖定，理論上兩個不同身份（一個管理員、一個商家）在同一毫秒內各自送出仍可能都通過檢查、合計超退。但這次要修的是原始報告「非併發、依序發生」的情境，這個修法已經完全堵住；殘留的毫秒級併發窗口需要兩個不同身份剛好同時動作，實際可利用性低，審查者判斷不算需要另開的發現。 |
+| 其他 | `getActiveMarkTotalForOrderPostgres` 兩個呼叫點傳入的 `order_id` 都正確對應同一張訂單；`formatAdminCurrency` 的負號處理正確（`Math.abs` + 補回正確位置的負號）；新增的 smoke test fixture 邏輯一致、結束後清乾淨。 |
+
+### 驗證
+
+`npm test` 316/316 全過。真實 Postgres smoke `merchant-refund-mark-postgres:smoke`、`payment-refund-postgres:smoke` 各新增一段交叉來源情境（一邊先退一部分，另一邊的上限檢查必須正確扣掉對方的金額），兩者皆通過；重跑 `admin-statistics-postgres:smoke`、`merchant-statistics-postgres:smoke`、`customer-savings-postgres:smoke` 確認沒有連帶壞掉。另用瀏覽器實際登入管理後台 `/admin/statistics`，確認三個新標籤（「已請款，已扣退款」、「已扣退款」、「未扣退款」）正確顯示，無 console 錯誤。

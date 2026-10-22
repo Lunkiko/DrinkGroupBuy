@@ -3259,7 +3259,12 @@ function buildAdminRedirectLocation(path, notice) {
 }
 
 function formatAdminCurrency(amount) {
-  return `NT$${(Number(amount) || 0).toLocaleString("zh-TW")}`;
+  const value = Number(amount) || 0;
+  // A refund-netted revenue figure can now legitimately be negative (e.g. adminStatisticsRepository.js);
+  // toLocaleString keeps the sign on the number, so without this the minus would land after "NT$"
+  // (e.g. "NT$-1,234") instead of in front of it.
+  const sign = value < 0 ? "-" : "";
+  return `${sign}NT$${Math.abs(value).toLocaleString("zh-TW")}`;
 }
 
 // weekStart is already a plain "YYYY-MM-DD" string (see getWeeklyTrendPostgres) -- sliced, not
@@ -3981,7 +3986,7 @@ function renderAdminStatisticsBody({
     { label: "已有結果的團購中，成功比例", value: successRateText },
     { label: "訂單總數", value: orders.totalOrders },
     { label: "已請款訂單數", value: orders.capturedOrders },
-    { label: "總營收（已請款）", value: formatAdminCurrency(orders.totalRevenue) },
+    { label: "總營收（已請款，已扣退款）", value: formatAdminCurrency(orders.totalRevenue) },
     { label: "平均客單價（已請款）", value: formatAdminCurrency(orders.averageOrderValue) },
     { label: repeatPurchaseLabel, value: repeatPurchaseRateText },
   ].map((card) => `
@@ -3999,7 +4004,7 @@ function renderAdminStatisticsBody({
           <th>店家</th>
           <th>團購場次</th>
           <th>已請款訂單數</th>
-          <th>營收</th>
+          <th>營收（已扣退款）</th>
         </tr>
       </thead>
       <tbody>
@@ -4028,7 +4033,7 @@ function renderAdminStatisticsBody({
         <tr>
           <th>週別（一為週首）</th>
           <th>已請款訂單數</th>
-          <th>營收</th>
+          <th>營收（未扣退款）</th>
           <th>折扣金額</th>
           <th>折扣佔原價比例</th>
         </tr>

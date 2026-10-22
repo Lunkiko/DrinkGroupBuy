@@ -81,13 +81,19 @@ async function createRefundMarkPostgres(database, input = {}) {
       const reason = (input.reason || "").trim();
       if (!reason) return { error: "refund_reason_required" };
 
-      const activeTotalResult = await transaction.query(`
-        SELECT COALESCE(SUM(amount), 0)::integer AS active_total
-        FROM merchant_refund_marks
-        WHERE order_id = $1 AND status = 'active'
+      // Also caps against payment_refunds (the still-live admin-approval path) -- it doesn't flip
+      // payment_status on a partial refund, so without this an admin-approved refund and a
+      // merchant-marked refund on the same order could each independently consume up to the full
+      // final_amount, over-refunding the order (2026-10-22 /code-review finding on
+      // adminStatisticsRepository.js, which first surfaced this as a negative revenue figure).
+      const refundTotalsResult = await transaction.query(`
+        SELECT
+          COALESCE((SELECT SUM(amount) FROM merchant_refund_marks WHERE order_id = $1 AND status = 'active'), 0)::integer AS active_mark_total,
+          COALESCE((SELECT SUM(refund_amount) FROM payment_refunds WHERE order_id = $1 AND status = 'refunded'), 0)::integer AS provider_refund_total
       `, [input.orderId]);
-      const activeTotalBefore = Number(activeTotalResult.rows[0]?.active_total || 0);
-      const remainingBefore = Number(order.final_amount) - activeTotalBefore;
+      const activeTotalBefore = Number(refundTotalsResult.rows[0]?.active_mark_total || 0);
+      const providerRefundedBefore = Number(refundTotalsResult.rows[0]?.provider_refund_total || 0);
+      const remainingBefore = Number(order.final_amount) - activeTotalBefore - providerRefundedBefore;
       if (amount > remainingBefore) {
         return {
           error: "refund_amount_exceeds_remaining_amount",
