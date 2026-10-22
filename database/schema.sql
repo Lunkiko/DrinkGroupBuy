@@ -409,6 +409,26 @@ WHERE status = 'active';
 
 CREATE INDEX idx_merchant_refund_marks_store ON merchant_refund_marks(store_id, status);
 
+-- Multi-channel LINE Pay accounts (2026-10-22): each store's own payment-provider credentials,
+-- instead of every store sharing one platform-wide LINE_PAY_CHANNEL_ID/SECRET. UNIQUE is on
+-- (store_id, provider), not store_id alone, leaving room for a second provider per store later
+-- without a schema change.
+CREATE TABLE store_payment_accounts (
+  id TEXT PRIMARY KEY,
+  store_id TEXT NOT NULL REFERENCES stores(id),
+  provider TEXT NOT NULL CHECK (provider IN ('line_pay', 'mock_line_pay')),
+  channel_id TEXT NOT NULL,
+  channel_secret TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (store_id, provider)
+);
+
+CREATE INDEX idx_store_payment_accounts_store_active
+ON store_payment_accounts(store_id, provider)
+WHERE status = 'active';
+
 CREATE TABLE payment_provider_events (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,

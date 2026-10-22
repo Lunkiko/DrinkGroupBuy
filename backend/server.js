@@ -185,6 +185,9 @@ const {
   createMerchantRefundMarkRepository
 } = require("./database/repositories/merchantRefundMarkRepository");
 const {
+  createStorePaymentAccountRepository
+} = require("./database/repositories/storePaymentAccountRepository");
+const {
   createMerchantApplicationRepository
 } = require("./database/repositories/merchantApplicationRepository");
 const {
@@ -338,6 +341,7 @@ const paymentRefundRepository = createPaymentRefundRepository({
 });
 // Postgres-only, no sqliteGateway -- see merchantRefundMarkRepository.js's module comment.
 const merchantRefundMarkRepository = createMerchantRefundMarkRepository({});
+const storePaymentAccountRepository = createStorePaymentAccountRepository({});
 // Postgres-only, no sqliteGateway -- see merchantApplicationRepository.js's module comment.
 const merchantApplicationRepository = createMerchantApplicationRepository({});
 // Postgres-only, no sqliteGateway -- see merchantMenuImportRepository.js's module comment.
@@ -1514,6 +1518,7 @@ const server = http.createServer(async (request, response) => {
               provider: lockedOrder.latestLinePayAuthorization?.provider || "line_pay",
               reason: "customer_cancelled_order",
               authorizationCancelRepository: paymentAuthorizationCancelRepository,
+              storePaymentAccountRepository,
               operationLockHeld: paymentAuthorizationCancelRepository.kind === "postgres"
             });
           } catch (error) {
@@ -1675,7 +1680,8 @@ const server = http.createServer(async (request, response) => {
           authorizationRequestRepository: paymentAuthorizationRequestRepository,
           authorizationCancelRepository: paymentAuthorizationCancelRepository,
           orderRevisionRepository,
-          reliabilityJobRepository
+          reliabilityJobRepository,
+          storePaymentAccountRepository
         });
         sendJson(response, 201, result);
       } catch (error) {
@@ -1705,7 +1711,8 @@ const server = http.createServer(async (request, response) => {
           paymentCaptureRepository,
           authorizationCancelRepository: paymentAuthorizationCancelRepository,
           authorizationRequestRepository: paymentAuthorizationRequestRepository,
-          reliabilityJobRepository
+          reliabilityJobRepository,
+          storePaymentAccountRepository
         });
         sendJson(response, 201, result);
       } catch (error) {
@@ -1730,7 +1737,8 @@ const server = http.createServer(async (request, response) => {
         const result = await refundLinePayPayment({
           authUser,
           body,
-          paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined
+          paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined,
+          storePaymentAccountRepository
         });
         sendJson(response, 200, result);
       } catch (error) {
@@ -1754,7 +1762,8 @@ const server = http.createServer(async (request, response) => {
           now: businessClock.nowIso(),
           authorizationConfirmRepository: paymentAuthorizationConfirmRepository,
           authorizationCancelRepository: paymentAuthorizationCancelRepository,
-          manualRepaymentRepository
+          manualRepaymentRepository,
+          storePaymentAccountRepository
         });
       } catch (error) {
         if (error instanceof PaymentServiceError) {
@@ -2883,7 +2892,8 @@ server.listen(port, () => {
     reliabilityJobRepository,
     authorizationConfirmRepository: paymentAuthorizationConfirmRepository,
     authorizationCancelRepository: paymentAuthorizationCancelRepository,
-    manualRepaymentRepository
+    manualRepaymentRepository,
+    storePaymentAccountRepository
   });
   if (linePayReconciliationScheduler.enabled) {
     console.log(
@@ -2902,6 +2912,7 @@ server.listen(port, () => {
     settlementRepository: settlementPostgresReady ? groupBuySettlementRepository : undefined,
     paymentCaptureRepository: settlementPostgresReady ? paymentCaptureRepository : undefined,
     authorizationCancelRepository: settlementPostgresReady ? paymentAuthorizationCancelRepository : undefined,
+    storePaymentAccountRepository: settlementPostgresReady ? storePaymentAccountRepository : undefined,
     pushTokenRepository: settlementPostgresReady ? pushTokenRepository : undefined
   });
   if (deadlineSettlementScheduler.enabled) {

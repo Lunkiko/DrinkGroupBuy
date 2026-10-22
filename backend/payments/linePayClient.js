@@ -8,7 +8,12 @@ loadLocalEnv(path.resolve(__dirname, "..", ".env"));
 const DEFAULT_SANDBOX_BASE_URL = "https://sandbox-api-pay.line.me";
 const DEFAULT_PRODUCTION_BASE_URL = "https://api-pay.line.me";
 
-function getLinePayConfig() {
+// `accountOverrides` (channelId/channelSecret) lets a caller use a specific store's LINE Pay
+// credentials instead of the platform-wide LINE_PAY_CHANNEL_ID/SECRET env vars -- see
+// backend/payments/linePayService.js, which resolves a store's account before calling any of the
+// functions below. Every exported function's `accountOverrides` parameter defaults to `{}`, so a
+// call site that never passes it keeps reading the env vars exactly as before.
+function getLinePayConfig(accountOverrides = {}) {
   const env = process.env.LINE_PAY_ENV || "sandbox";
   const baseUrl = process.env.LINE_PAY_API_BASE_URL
     || (env === "production" ? DEFAULT_PRODUCTION_BASE_URL : DEFAULT_SANDBOX_BASE_URL);
@@ -16,8 +21,8 @@ function getLinePayConfig() {
   return {
     env,
     baseUrl: baseUrl.replace(/\/$/, ""),
-    channelId: process.env.LINE_PAY_CHANNEL_ID,
-    channelSecret: process.env.LINE_PAY_CHANNEL_SECRET,
+    channelId: accountOverrides.channelId ?? process.env.LINE_PAY_CHANNEL_ID,
+    channelSecret: accountOverrides.channelSecret ?? process.env.LINE_PAY_CHANNEL_SECRET,
     currency: process.env.LINE_PAY_CURRENCY || "TWD",
     confirmUrl: process.env.LINE_PAY_CONFIRM_URL,
     cancelUrl: process.env.LINE_PAY_CANCEL_URL,
@@ -37,8 +42,8 @@ function assertLinePayConfig(config) {
   }
 }
 
-async function requestLinePayPayment(input) {
-  const config = getLinePayConfig();
+async function requestLinePayPayment(input, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const amount = toPositiveInteger(input.amount, "amount");
@@ -92,8 +97,8 @@ function isLinePayCaptureSeparatedEnabled() {
   return readBooleanEnv(process.env.LINE_PAY_CAPTURE_SEPARATED, false);
 }
 
-async function confirmLinePayPayment(transactionId, input) {
-  const config = getLinePayConfig();
+async function confirmLinePayPayment(transactionId, input, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const amount = toPositiveInteger(input.amount, "amount");
@@ -103,8 +108,8 @@ async function confirmLinePayPayment(transactionId, input) {
   return linePayPost(`/v3/payments/${encodedTransactionId}/confirm`, { amount, currency }, config);
 }
 
-async function captureLinePayPaymentAuthorization(transactionId, input) {
-  const config = getLinePayConfig();
+async function captureLinePayPaymentAuthorization(transactionId, input, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const amount = toPositiveInteger(input.amount, "amount");
@@ -114,8 +119,8 @@ async function captureLinePayPaymentAuthorization(transactionId, input) {
   return linePayPost(`/v3/payments/authorizations/${encodedTransactionId}/capture`, { amount, currency }, config);
 }
 
-async function voidLinePayPaymentAuthorization(transactionId) {
-  const config = getLinePayConfig();
+async function voidLinePayPaymentAuthorization(transactionId, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const encodedTransactionId = encodeURIComponent(requiredString(transactionId, "transactionId"));
@@ -123,8 +128,8 @@ async function voidLinePayPaymentAuthorization(transactionId) {
   return linePayPost(`/v3/payments/authorizations/${encodedTransactionId}/void`, null, config);
 }
 
-async function refundLinePayPayment(transactionId, input = {}) {
-  const config = getLinePayConfig();
+async function refundLinePayPayment(transactionId, input = {}, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const encodedTransactionId = encodeURIComponent(requiredString(transactionId, "transactionId"));
@@ -136,16 +141,16 @@ async function refundLinePayPayment(transactionId, input = {}) {
   return linePayPost(`/v3/payments/${encodedTransactionId}/refund`, body, config);
 }
 
-async function retrieveLinePayPaymentDetails(transactionId) {
-  const config = getLinePayConfig();
+async function retrieveLinePayPaymentDetails(transactionId, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
 
   const encodedTransactionId = encodeURIComponent(requiredString(transactionId, "transactionId"));
   return linePayGet("/v3/payments", `transactionId=${encodedTransactionId}`, config);
 }
 
-async function checkLinePayPaymentRequestStatus(transactionId) {
-  const config = getLinePayConfig();
+async function checkLinePayPaymentRequestStatus(transactionId, accountOverrides = {}) {
+  const config = getLinePayConfig(accountOverrides);
   assertLinePayConfig(config);
   const encodedTransactionId = encodeURIComponent(requiredString(transactionId, "transactionId"));
   return linePayGet(`/v3/payments/requests/${encodedTransactionId}/check`, "", config,
