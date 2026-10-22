@@ -1,12 +1,12 @@
 # Azure 課堂展示環境
 
-最後更新：2026-10-22（記錄部署流程不會自動套用 migration 這個缺口，migration 版本更新到 012）
+最後更新：2026-10-22（部署流程不會自動套用 migration 這個缺口已經修掉：backend 開機時會自動補套用，見下方）
 
 ## 目前狀態（2026-09-11）
 
 - **已建立**：Azure 資源群組 `drinkgroupbuy-demo-rg`、PostgreSQL Flexible Server `drinkgroupbuy-demo-hc`、App Service `drinkgroupbuy-demo-api`。
 - **已完成**：資料庫 migration（目前版本 012，2026-10-22 套用）已套用；PostgreSQL 防火牆已開放給 App Service（讀寫資料庫的 API 已驗證回應正常）；App Service 環境變數已設定（PostgreSQL 連線、`AUTH_SESSION_SECRET`、`ADMIN_WEB_PASSWORDS`、各 `*_RUNTIME` 等）；Backend 已部署（`GET /health` 與需要資料庫的 API 皆已驗證回應正常）。
-- **⚠️ 部署流程的已知缺口（2026-10-22 實際發生過一次）**：`.github/workflows/main_drinkgroupbuy-demo-api.yml` 的 `main` 推送部署**只會部署程式碼，不會自動把新的 migration 套用到 Azure 的正式資料庫**（CI 裡的 `npm run db:init`／`npm run test:db` 只套用在測試用的暫時資料庫，不是 Azure 那個）。曾發生：011、012 兩個 migration 合併進 main、部署完程式碼後，Azure 資料庫沒有對應的新表，程式碼已經在查這些表，導致顧客「個人中心」省錢統計等功能直接噴錯。**以後每次合併包含新 migration 的改動後，部署完程式碼，要記得手動對 Azure 資料庫套用新 migration**（見下方「建立與部署順序」migration 那步，連線字串從 App Service 的環境變數拿）；這個手動步驟目前沒有自動化，也沒有部署後自動檢查「程式碼需要的表都存在」這類保護機制。
+- **已修掉的缺口（2026-10-22 實際發生過一次，當天修復）**：`.github/workflows/main_drinkgroupbuy-demo-api.yml` 的 `main` 推送部署只會部署程式碼，過去不會自動把新的 migration 套用到 Azure 的正式資料庫（CI 裡的 `npm run db:init`／`npm run test:db` 只套用在測試用的暫時資料庫，不是 Azure 那個）。曾發生：011、012 兩個 migration 合併進 main、部署完程式碼後，Azure 資料庫沒有對應的新表，程式碼已經在查這些表，導致顧客「個人中心」省錢統計等功能直接噴錯。**已在 `backend/server.js` 加上開機自動套用 migration 的邏輯**（`applyPendingMigrationsIfPostgres`，`DATABASE_URL` 有設定才會執行）：往後只要 App Service 重新啟動（部署完成後一定會重啟），就會先把資料庫補到跟程式碼同步，才開始接受請求；migration 失敗會讓程式直接無法啟動（`process.exit(1)`），不會帶著錯誤的 schema 繼續服務。已在本機實際驗證：補套用一次缺的 migration、重開一次確認不會重複套用。
 - **已建立但僅供內部測試**：Android APK 已重新打包，使用 Debug Key 簽署（不是正式上架用的簽署金鑰），已設定連到 Azure 這個公開 HTTPS 網址；發布版（release）建置，JS 程式碼包在檔案裡，不需要連著開發電腦就能獨立執行。
 - **已完成**：Firebase／Google Cloud Console 的 Android OAuth 用戶端 SHA-1 已直接用工具驗證跟這版 APK 簽章一致；在真的 Android 手機用真的 Google 帳號，實際走過一次「登入 → 自動註冊為顧客」的完整流程，並用真實姓名顯示＋資料庫帳號 ID 格式兩項證據交叉確認過是真的全新註冊，不是誤判；App Service 環境變數已確認包含 `FIREBASE_PROJECT_ID`／`FIREBASE_SERVICE_ACCOUNT_JSON`。
 - **⚠️ 已偏離下方「安全起始值」範本**：使用者要求課堂展示環境的開團／下單／付款／時間到期結算都要跟正式版行為一致，2026-09-11 已開啟 `SETTLEMENT_SCHEDULER_ENABLED`、`PAYMENT_RECONCILIATION_ENABLED`（連同 `PAYMENT_RECONCILIATION_ALLOW_PRODUCTION`，因為這個判斷的是 `NODE_ENV` 不是金流環境）、`PICKUP_EXPIRATION_SCHEDULER_ENABLED`，並補上 LINE Pay sandbox 真實憑證與指向 Azure 網址的 `LINE_PAY_CONFIRM_URL`／`LINE_PAY_CANCEL_URL`——**LINE Pay sandbox 付款路徑現在是真的會被呼叫**，不再是「不測付款路徑」的狀態；`LINE_PAY_ENV` 仍維持 `sandbox`，沒有開真實金流。之後如果要重新部署或建立第二套環境，不要照抄下方範本的 `false`，要參照這裡目前的真實狀態。詳見 `docs/AI-security-review-log.md` 2026-09-11 第四次追加。

@@ -2,6 +2,9 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { promises: fs } = require("node:fs");
+const { Client: PgClient } = require("pg");
+const { runMigrations } = require("../database/migrate");
+const { createPostgresConnectionOptions } = require("./database/postgresConnection");
 const {
   cancelGroupBuyActivity,
   cancelCustomerOrderInDatabase,
@@ -2880,7 +2883,36 @@ const schedulerEnvironment = {
     : process.env.PICKUP_EXPIRATION_SCHEDULER_ENABLED
 };
 
-loadDevConsoleState().then(() => {
+// Deploying this app's code (e.g. a GitHub Actions push to main) never applies new database
+// migrations by itself -- it only replaces the running code. A deploy that ships a new migration
+// file without someone separately running it against the real database leaves the app serving
+// requests against a schema it doesn't match (2026-10-22: this happened for real on the Azure
+// demo environment -- migrations 011/012 shipped in code, the database never got them, and every
+// endpoint touching the new tables started failing). Running pending migrations here, once, before
+// the server starts accepting requests, closes that gap: every process start (including the one a
+// deployment triggers) leaves the schema caught up with whatever code it's about to serve. Scoped
+// to when this process is actually configured to talk to Postgres -- never attempts this against
+// the SQLite dev/test runtime, which isn't migration-tracked the same way.
+async function applyPendingMigrationsIfPostgres() {
+  // This project's convention (see AGENTS.md: runtime 已永久切換至 PostgreSQL) is that DATABASE_URL
+  // being set means every repository is running against Postgres -- each repository's own
+  // *_RUNTIME flag decides per-repository, not one shared DATABASE_RUNTIME value, so checking
+  // DATABASE_URL's presence is the one signal that's actually reliable here.
+  if (!process.env.DATABASE_URL) return;
+
+  const client = new PgClient(createPostgresConnectionOptions());
+  await client.connect();
+  try {
+    const result = await runMigrations(client);
+    if (result.appliedCount > 0) {
+      console.log(`[migrate] Applied ${result.appliedCount} migration(s) on startup. Now at version ${result.latestVersion}.`);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+loadDevConsoleState().then(() => applyPendingMigrationsIfPostgres()).then(() => {
 server.listen(port, () => {
   console.log(`DrinkGroupBuy backend listening on http://localhost:${port}`);
   const devModeBlockedReason = devAuthModeBlockedReason();
@@ -2934,7 +2966,7 @@ server.listen(port, () => {
   }
 });
 }).catch((error) => {
-  console.error("Failed to load dev console state:", error.message);
+  console.error("Failed to start up (dev console state load or database migration):", error.message);
   process.exit(1);
 });
 
