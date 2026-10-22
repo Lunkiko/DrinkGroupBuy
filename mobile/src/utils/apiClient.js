@@ -548,25 +548,6 @@ export async function getPickupCredential(orderId) {
   return payload.credential;
 }
 
-export async function createMerchantRefundRequest(orderId, input) {
-  const response = await fetch(
-    `${backendBaseUrl}/api/merchant/orders/${encodeURIComponent(orderId)}/refund-requests`,
-    {
-      method: "POST",
-      headers: withAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(input)
-    }
-  );
-  const payload = await response.json();
-  if (!response.ok) {
-    const error = new Error(describeApiError(payload.error) ?? "Create refund request failed");
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
-  return payload;
-}
-
 // Scheme B self-reported refund: records that the merchant refunded the customer themselves
 // (LINE Pay, cash, transfer -- the backend never calls a provider). Capped server-side at the
 // order's remaining refundable amount. `input.idempotencyKey` must stay the same across retries
@@ -607,22 +588,6 @@ export async function revokeRefundMark(orderId, markId) {
     throw error;
   }
   return payload;
-}
-
-export async function listMerchantRefundRequests(storeId, input = {}) {
-  const query = input.status ? `?status=${encodeURIComponent(input.status)}` : "";
-  const response = await fetch(
-    `${backendBaseUrl}/api/merchant/stores/${encodeURIComponent(storeId)}/refund-requests${query}`,
-    { headers: withAuthHeaders() }
-  );
-  const payload = await response.json();
-  if (!response.ok) {
-    const error = new Error(describeApiError(payload.error) ?? "List refund requests failed");
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
-  return payload.refundRequests;
 }
 
 export async function listMerchantRefundMarks(storeId, input = {}) {

@@ -40,11 +40,17 @@ async function getStoreStatisticsPostgres(database, storeId) {
     // and is unaffected by refunds. Order count and discount totals still count a fully-refunded
     // order -- whether those should also exclude it is a separate, not-yet-decided product question
     // (see docs/payment-rules-and-flow.md "退款"); this only fixes the revenue figure itself.
+    // Two independent refund sources both net against revenue here: merchant_refund_marks (scheme B,
+    // self-reported, never flips payment_status) and the still-live admin-approval payment_refunds
+    // path (a PARTIAL refund there also never flips payment_status -- only a full refund does, which
+    // already drops the order out of SALES_ORDER_FILTER). Summed separately per order and added
+    // together rather than UNIONed, since the two tables can never both have rows for the same order
+    // (payment_refunds is the old, now-admin-only path; merchant_refund_marks is the new merchant path).
     database.query(`
       SELECT
         COUNT(*) AS order_count,
         COALESCE(SUM(orders.final_amount), 0) AS gross_revenue,
-        COALESCE(SUM(refund.refunded_amount), 0) AS refund_total,
+        COALESCE(SUM(mark_refund.refunded_amount), 0) + COALESCE(SUM(provider_refund.refunded_amount), 0) AS refund_total,
         COALESCE(SUM(orders.original_amount - orders.final_amount), 0) AS discount_given_total
       FROM orders
       JOIN group_buy_activities activity ON activity.id = orders.activity_id
@@ -53,7 +59,13 @@ async function getStoreStatisticsPostgres(database, storeId) {
         FROM merchant_refund_marks
         WHERE status = 'active'
         GROUP BY order_id
-      ) refund ON refund.order_id = orders.id
+      ) mark_refund ON mark_refund.order_id = orders.id
+      LEFT JOIN (
+        SELECT order_id, SUM(refund_amount) AS refunded_amount
+        FROM payment_refunds
+        WHERE status = 'refunded'
+        GROUP BY order_id
+      ) provider_refund ON provider_refund.order_id = orders.id
       WHERE ${SALES_ORDER_FILTER}
     `, [storeId]),
     // Success = the group buy reached its first discount tier. Only settled activities count:

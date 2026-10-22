@@ -72,6 +72,8 @@ test("revenue, discount and top drinks all count the same set of orders", async 
   }
   assert.match(salesQuery.statement, /FROM merchant_refund_marks/);
   assert.match(salesQuery.statement, /WHERE status = 'active'/);
+  assert.match(salesQuery.statement, /FROM payment_refunds/);
+  assert.match(salesQuery.statement, /WHERE status = 'refunded'/);
   assert.match(drinksQuery.statement, /ORDER BY cups DESC, name ASC LIMIT \$2/);
   assert.equal(drinksQuery.parameters[1], 3);
 });

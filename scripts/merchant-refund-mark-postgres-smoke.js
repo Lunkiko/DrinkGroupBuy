@@ -76,6 +76,22 @@ async function main() {
     );
     assert.equal(markCountForOtherOrder.rows[0].count, 0, "the reused key must not create a mark under the wrong order");
 
+    // 2c. Reusing that same key for the SAME order/amount but a DIFFERENT reason must also be
+    // refused, not silently hand back the first mark with its now-stale reason.
+    let reasonConflictError = null;
+    try {
+      await markOrderRefundedByMerchant({
+        authUser: merchantUser,
+        orderId: orderIdMain,
+        body: { amount: 40, reason: "postgres_proof_different_reason", idempotencyKey: firstKey },
+        merchantRefundMarkRepository,
+      });
+    } catch (error) {
+      reasonConflictError = error;
+    }
+    assert.equal(reasonConflictError?.statusCode, 409);
+    assert.equal(reasonConflictError?.payload?.status, "idempotency_key_conflict");
+
     // 3. The cap: order final_amount is 90, 40 is already active, so 51 is refused.
     let overCapError = null;
     try {

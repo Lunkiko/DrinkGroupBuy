@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -57,12 +57,21 @@ export function MerchantRefundRequestsScreen({ navigation, selectedMerchantStore
     loadData();
   }, [selectedMerchantStoreId]);
 
+  // Active refund-mark totals keyed by order id, built once per refundMarks change instead of
+  // rescanning the whole array for every order on every render (incl. every keystroke in the form).
+  const activeTotalByOrderId = useMemo(() => {
+    const totals = new Map();
+    for (const mark of refundMarks) {
+      if (mark.status !== "active") continue;
+      totals.set(mark.orderId, (totals.get(mark.orderId) || 0) + mark.amount);
+    }
+    return totals;
+  }, [refundMarks]);
+
   // What's still refundable on this order: final amount minus every mark still in effect.
   // A revoked mark no longer counts, so revoking one makes room to mark again.
   function remainingRefundableAmount(order) {
-    const activeTotal = refundMarks
-      .filter((mark) => mark.orderId === order.id && mark.status === "active")
-      .reduce((sum, mark) => sum + mark.amount, 0);
+    const activeTotal = activeTotalByOrderId.get(order.id) || 0;
     return Math.max((order.finalAmount ?? 0) - activeTotal, 0);
   }
 
@@ -369,7 +378,8 @@ function getMarkErrorMessage(error) {
     invalid_refund_amount: "退款金額必須是大於 0 的整數。",
     refund_amount_exceeds_remaining_amount: "退款金額超過剩餘可退金額。",
     refund_reason_required: "請填寫退款原因。",
-    idempotency_key_required: "系統發生問題，請重新操作一次。"
+    idempotency_key_required: "系統發生問題，請重新操作一次。",
+    idempotency_key_conflict: "系統發生問題，請重新操作一次（這筆標記與剛剛送出的不一致）。"
   };
   return messages[errorCode] || error?.message || "標記退款失敗，請稍後再試。";
 }

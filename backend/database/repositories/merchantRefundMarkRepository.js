@@ -54,17 +54,23 @@ async function createRefundMarkPostgres(database, input = {}) {
       // (capture/void/refund) take the same lock on the same row (paymentRefundRepository.js,
       // paymentCaptureRepository.js), so this also correctly serializes against those, not just
       // against other marks.
-      const orderResult = await transaction.query("SELECT * FROM orders WHERE id = $1 FOR UPDATE", [input.orderId]);
+      // FOR UPDATE OF orders only -- locking just the orders row, not the joined activity row,
+      // keeps this the same lock scope as before (activity rows aren't part of what this
+      // transaction needs to serialize against).
+      const orderResult = await transaction.query(`
+        SELECT orders.*, activity.store_id AS activity_store_id
+        FROM orders
+        JOIN group_buy_activities activity ON activity.id = orders.activity_id
+        WHERE orders.id = $1
+        FOR UPDATE OF orders
+      `, [input.orderId]);
       const order = orderResult.rows[0];
       if (!order) return { error: "order_not_found" };
       if (order.payment_status !== "captured" || order.final_amount == null) {
         return { error: "order_not_captured" };
       }
 
-      const storeResult = await transaction.query(
-        "SELECT store_id FROM group_buy_activities WHERE id = $1", [order.activity_id]
-      );
-      const orderStoreId = storeResult.rows[0]?.store_id || null;
+      const orderStoreId = order.activity_store_id || null;
       if (input.storeId && orderStoreId !== input.storeId) {
         return { error: "order_store_mismatch" };
       }
@@ -89,10 +95,11 @@ async function createRefundMarkPostgres(database, input = {}) {
         };
       }
 
-      await transaction.query(`
+      const inserted = await transaction.query(`
         INSERT INTO merchant_refund_marks (
           id, order_id, store_id, marked_by_user_id, amount, reason, status, idempotency_key, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $8)
+        RETURNING *
       `, [markId, input.orderId, orderStoreId, input.actorUserId, amount, reason, idempotencyKey, now]);
       await insertAudit(transaction, "merchant_refund_mark_created", markId, {
         orderId: input.orderId,
@@ -102,9 +109,8 @@ async function createRefundMarkPostgres(database, input = {}) {
         remainingRefundableAmountBefore: remainingBefore
       }, input.actorUserId, now);
 
-      const created = await transaction.query("SELECT * FROM merchant_refund_marks WHERE id = $1", [markId]);
       return {
-        refundMark: mapRefundMark(created.rows[0]),
+        refundMark: mapRefundMark(inserted.rows[0]),
         alreadyExists: false,
         remainingRefundableAmount: remainingBefore - amount
       };
@@ -222,6 +228,10 @@ function matchesIdempotentReplay(existingRow, input) {
   if (existingRow.order_id !== input.orderId) return false;
   if (input.storeId && existingRow.store_id !== input.storeId) return false;
   if (Number(existingRow.amount) !== Number(input.amount)) return false;
+  // existingRow.reason is already trimmed (trimmed before insert, below); input.reason is raw here
+  // since this runs before that trim on the create path -- trim it too, or identical reasons that
+  // only differ in surrounding whitespace would be wrongly treated as a conflicting replay.
+  if (existingRow.reason !== (input.reason || "").trim()) return false;
   return true;
 }
 

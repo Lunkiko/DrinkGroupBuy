@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-21
+updated: 2026-10-22
 ---
 
 ## 功能總覽 [完成]
@@ -178,7 +178,7 @@ updated: 2026-10-21
     > 存放商家標記退款的紀錄：訂單、金額、原因、狀態（生效中／已撤銷）、誰標記的、什麼時候標記的。跟現有的退款申請表分開，不共用，避免影響既有待審申請。
   - 《開發》Backend：標記與撤銷退款 [完成] (10/22) — 新增 `backend/database/repositories/merchantRefundMarkRepository.js`（Postgres-only，無 SQLite 相容路徑，比照 `merchantApplicationRepository.js` 的理由：這個表之前不存在、runtime 已永久切 PostgreSQL）與 `backend/payments/merchantRefundMarkService.js`；新路由 `POST /api/merchant/orders/:orderId/refund-marks`（標記）與 `POST /api/merchant/orders/:orderId/refund-marks/:markId/revoke`（撤銷），取代舊的 `POST .../refunds`。金額加總驗證在交易內對 `orders` 列下 `FOR UPDATE` 鎖後才計算，同一個鎖也跟請款／取消授權／退款這些既有付款生命週期操作互相序列化，不只是跟別的標記互相序列化。舊的 `refundOrderAsMerchant`（呼叫 LINE Pay refund API 那套）與其專用的 `refundLinePayPaymentAuthorized` 已整支移除（已封存，見上一項）；過程中發現並修正一個既有 bug——`refundRequestService.js` 的 `createMerchantRefundRequest` 組錯誤回應時，`...result` 展開順序在 `error` 欄位之後，會把看得懂的錯誤訊息蓋回原始代碼，手機端 `describeApiError` 的預設訊息因此一直是錯的；新舊兩處都已修正展開順序
     > 商家標記訂單退款、24 小時內撤銷標記的後端邏輯：金額不能超過訂單可退餘額、只能動自己門市的訂單、防止重複送出。
-  - 《開發》Backend：統計改用即時加總 [完成] (10/22) — 過程中發現方案 B 造成的兩個真實統計 bug（不是改動前就有的）：`payment_status` 自報退款後永遠不會變成 `refunded`，導致（1）`customerSavingsRepository.js` 會把已全額退款的訂單繼續算進顧客「省下金額」，(2) `merchantStatisticsRepository.js` 的商家營收會把已全額退款的訂單繼續算進營收（原本只有部分退款會漏扣，現在連全額退款也會，比改動前更嚴重）。已修：顧客省下金額新增「active 退款加總 < final_amount」才算的條件；商家營收把扣項來源從舊的 `payment_refunds` 換成 `merchant_refund_marks`（status='active'）。兩個改動都重新驗證過 Postgres smoke（`customer-savings-postgres:smoke`、`merchant-statistics-postgres:smoke`，各自新增涵蓋「透過自報全額退款應排除」「透過自報部分退款不應排除」的情境），並修正對應的假資料庫單元測試斷言。`npm test` 306/306
+  - 《開發》Backend：統計改用即時加總 [完成] (10/22) — 過程中發現方案 B 造成的兩個真實統計 bug（不是改動前就有的）：`payment_status` 自報退款後永遠不會變成 `refunded`，導致（1）`customerSavingsRepository.js` 會把已全額退款的訂單繼續算進顧客「省下金額」，(2) `merchantStatisticsRepository.js` 的商家營收會把已全額退款的訂單繼續算進營收（原本只有部分退款會漏扣，現在連全額退款也會，比改動前更嚴重）。已修：顧客省下金額新增「active 退款加總 < final_amount」才算的條件；商家營收扣項來源當時換成只看 `merchant_refund_marks`（status='active'），後來 10/22 的 `/code-review` 抓到這個換法是「換掉」不是「加上去」，漏扣了還在走舊管理員審核路徑（`payment_refunds`）的部分退款；已改成兩個來源的金額分開加總、同時扣（見下方「《審查》/code-review」那筆）。兩個改動都重新驗證過 Postgres smoke（`customer-savings-postgres:smoke`、`merchant-statistics-postgres:smoke`，各自新增涵蓋「透過自報全額退款應排除」「透過自報部分退款不應排除」的情境），並修正對應的假資料庫單元測試斷言。`npm test` 306/306
     > 商家營收等統計查詢，改成即時扣掉目前「生效中」的退款金額，不去改動團購結算當下留下的折扣快照。
     - **已知未修的缺口（刻意不在這次範圍）**：`adminStatisticsRepository.js`（管理員後台的平台總營收、週趨勢、各店排行）完全沒有任何退款扣除邏輯，過去（方案 A）全額退款會因為 `payment_status` 變成 `refunded` 而整筆被排除在統計外，部分退款則本來就沒扣；方案 B 下連全額退款也不會再被排除，等於管理員看到的平台總營收會比實際偏高。這個檔案影響範圍較大（多個查詢共用同一套慣例），刻意不在這次一起改，列為待辦，之後要改時用跟這次相同的手法（`merchant_refund_marks` LEFT JOIN）即可
   - 《審查》/security-review [完成] (10/22) — 獨立審查者＋獨立覆核者兩階段流程，抓到 1 個中風險問題並已修：`merchantRefundMarkRepository.js` 的冪等鍵查到既有紀錄後沒有驗證訂單／金額是否match這次請求，商家把同一把 key 用在自己名下不同訂單時會被靜默當成功、新訂單實際沒寫入——這正是 2026-10-21 那筆記錄裡修過的同一類問題，但沒有被搬進這次新表。已修（新增共用的 `matchesIdempotentReplay` 檢查，早查與併發回收兩條路徑都套用），新增 1 個單元測試＋1 個 Postgres smoke 情境驗證。詳細記錄見 `docs/AI-security-review-log.md` 2026-10-22「商家退款改方案 B」那筆
@@ -189,6 +189,8 @@ updated: 2026-10-21
   - 《測試》自動化測試與 Postgres 暫時 schema 測試 [完成] (10/22) — 單元測試 `backend/payments/merchantRefundMarkService.test.js`（15 項，涵蓋角色/門市權限、金額與原因驗證、冪等重送、超額、撤銷擁有者、撤銷視窗、撤銷已撤銷的冪等行為、跨訂單/門市的 404），`npm test` 306/306 全過。真實 Postgres smoke `scripts/merchant-refund-mark-postgres-smoke.js`（`npm run merchant-refund-mark-postgres:smoke`）涵蓋標記、冪等、超額金額、跨門市拒絕、撤銷、非本人撤銷、撤銷逾期，以及**兩個真實資料庫連線同時標記同一張訂單、金額加總會超過上限**的併發測試，確認剛好一筆成功、一筆被擋下，證明 `FOR UPDATE` 鎖真的序列化了併發寫入，不只是語法過關。migration 011 已套用到本機開發資料庫（純新增表，未改動既有資料）
   - 《審查》/security-review [待處理]
     > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
+  - 《審查》/code-review --fix medium [完成] (10/22) — 8 個角度各自找候選問題、每個候選再經獨立覆核者確認，共 8 個問題全部確認（7 個 CONFIRMED、1 個 PLAUSIBLE）並當場修掉：(1) 商家營收統計漏扣管理員審核路徑的部分退款（見上方統計那筆的更新說明）；(2) `linePayService.js` 的管理員退款錯誤訊息被展開順序蓋掉（這個 PR 在別處修過同一類 bug，這裡漏改）；(3) 冪等鍵重複檢查沒比對退款原因，原因改了會被當成同一筆靜默吞掉；(4) 手機端缺少「冪等鍵衝突」這個錯誤代碼對應的訊息；(5) 新的 `active`／`revoked` 狀態值沒補進 `docs/AI-status-candidates.md`；(6) 標記退款的資料庫交易查詢數可以再少、縮短鎖定時間；(7) `apiClient.js` 兩個改版後沒人呼叫的舊退款申請函式；(8) 商家退款畫面的剩餘可退金額計算沒做 `useMemo`。修完後 `npm test` 307/307、`merchant-refund-mark-postgres:smoke`／`merchant-statistics-postgres:smoke`／`customer-savings-postgres:smoke`／`payment-refund-postgres:smoke` 全過
+    > 針對這次分支改動（不含已經單獨跑過 `/security-review` 的那部分）再跑一次程式碼品質與正確性審查。
   - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身，這次方案 B 改動不動這個頁面，繼續處理既有的待審申請
     > 平台營運人員審核退款申請、決定核准或駁回的網頁畫面，跟顧客/商家用的手機 App 是分開的。
 - 多店各自金流帳號 [待處理]
