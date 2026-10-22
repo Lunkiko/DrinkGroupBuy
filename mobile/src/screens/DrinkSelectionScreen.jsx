@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Card } from "../components/Card";
+import { getMenuCategoryLabel, MenuCategoryTabs, MenuDrinkCard, MenuInfoBanner, MenuSectionHeading } from "../components/CustomerMenuParts";
 import { ChoiceChip } from "../components/ChoiceChip";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
@@ -88,6 +88,7 @@ export function DrinkSelectionScreen({ navigation, route, appState, actions, sel
 
 function DrinkMenuContent({ navigation, route, appState, actions, selectedCustomerId, groupBuyActivity, menu }) {
   const styles = useThemedStyles(makeStyles);
+  const scrollRef = useRef(null);
   const store = menu.store;
   const storeDrinks = menu.menuItems;
 
@@ -101,91 +102,87 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
   const [quantity, setQuantity] = useState(editOrderItem?.quantity ?? 1);
   const [submitted, setSubmitted] = useState(false);
   const [customizing, setCustomizing] = useState(Boolean(editOrderItem));
+  useEffect(() => {
+    if (!submitted) return undefined;
+    const timer = setTimeout(() => setSubmitted(false), 2400);
+    return () => clearTimeout(timer);
+  }, [submitted]);
   const cartItemsForGroupBuyActivity = (appState.cartItems ?? []).filter((item) => (
     item.groupBuyActivityId === groupBuyActivity.id && (!item.customerId || item.customerId === selectedCustomerId)
   ));
   const cartQuantity = cartItemsForGroupBuyActivity.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cartItemsForGroupBuyActivity.reduce((sum, item) => sum + item.subtotal, 0);
+  useEffect(() => {
+    if (!submitted || cartQuantity === 0) return undefined;
+    const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 100);
+    return () => clearTimeout(timer);
+  }, [submitted, cartQuantity]);
 
   const selectedOptions = drink.customizationGroups
-    .flatMap((group) => group.options)
+    .flatMap((group) => group.options.map((option) => ({ ...option, optionType: group.optionType })))
     .filter((option) => selectedOptionIds.includes(option.id));
   const unitPrice = drink.basePrice + selectedOptions.reduce((sum, option) => sum + option.priceDelta, 0);
   const subtotal = unitPrice * quantity;
   const categories = [{ id: "recommended", label: "全部" }, ...[...new Set(storeDrinks.map((item) => item.category))]
-    .map((categoryId) => ({ id: categoryId, label: categoryId }))];
+    .map((categoryId) => ({ id: categoryId, label: getMenuCategoryLabel(categoryId) }))];
   const [category, setCategory] = useState("recommended");
   const filteredDrinks = category === "recommended"
     ? storeDrinks
     : storeDrinks.filter((item) => item.category === category);
+  const displayedDrinks = customizing ? [drink] : filteredDrinks;
+  const customizationGroups = [...drink.customizationGroups].sort((left, right) => (
+    ({ size: 0, sweetness: 1, ice: 2, topping: 3 }[left.optionType] ?? 4)
+      - ({ size: 0, sweetness: 1, ice: 2, topping: 3 }[right.optionType] ?? 4)
+  ));
+  const drinkCards = displayedDrinks.length ? displayedDrinks.map((item) => (
+    <MenuDrinkCard
+      drink={item}
+      key={item.id}
+      recommended={item.id === storeDrinks[0]?.id && !customizing}
+      onPress={customizing ? undefined : () => {
+        setDrinkId(item.id);
+        setSelectedOptionIds(buildInitialSelections(item, null));
+        setSubmitted(false);
+        setCustomizing(true);
+      }}
+    />
+  )) : <EmptyPanel>此分類目前沒有品項。</EmptyPanel>;
 
   return (
     <View style={styles.screenWrap}>
       <MobileScreen
-        title={editOrderItem ? "修改飲料" : "選擇飲料"}
-        subtitle={`${store?.name} · ${groupBuyActivity.title}`}
-        onBack={() => navigation.goBack()}
+        title={editOrderItem ? "修改飲料" : customizing ? "客製化飲品" : store?.name ?? "選擇飲料"}
+        onBack={() => customizing && !editOrderItem ? setCustomizing(false) : navigation.goBack()}
+        scrollRef={scrollRef}
       >
-      <View style={styles.menuHeader}>
-        <View style={styles.menuHero}>
-          <Text style={styles.shopName}>{store?.name}</Text>
-          <Text style={styles.groupBuyActivityName}>{groupBuyActivity.title}</Text>
+      {!customizing ? <View style={styles.groupBuyRow}>
+        <View style={styles.groupBuyIcon}>
+          <View style={styles.groupBuyHeadLeft} /><View style={styles.groupBuyHeadRight} />
+          <View style={styles.groupBuyBodyLeft} /><View style={styles.groupBuyBodyRight} />
         </View>
+        <Text style={styles.groupBuyActivityName}>{groupBuyActivity.title}</Text>
+      </View> : null}
+      {!customizing ? <MenuInfoBanner title="先選擇飲料，再設定甜度、冰塊與加料" /> : null}
+      {!customizing ? <View style={styles.menuHeader}>
+        <MenuSectionHeading title="飲品菜單" />
+        <MenuCategoryTabs categories={categories} selected={category} onSelect={setCategory} />
+      </View> : null}
 
-        <View style={styles.categoryRow}>
-          {categories.map((item) => (
-            <ChoiceChip
-              key={item.id}
-              label={item.label}
-              onPress={() => setCategory(item.id)}
-              selected={category === item.id}
-            />
-          ))}
+      {customizing ? (
+        <View style={styles.drinkHero}>
+          <View style={styles.drinkImageSlot} accessibilityLabel="飲品圖片留白" />
+          <View style={styles.drinkHeroText}>
+            <Text style={styles.drinkHeroName}>{drink.name}</Text>
+            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.drinkHeroPrice}>{formatCurrency(drink.basePrice)}</Text>
+            {drink.description ? <Text style={styles.drinkHeroDescription}>{drink.description}</Text> : null}
+          </View>
         </View>
-      </View>
-
-      <Section title={customizing ? "已選飲料" : "人氣推薦"}>
-        {filteredDrinks.length ? filteredDrinks.map((item) => (
-          <Card
-            compact
-            accessibilityState={{ selected: customizing && drinkId === item.id }}
-            key={item.id}
-            onPress={() => {
-              setDrinkId(item.id);
-              setSelectedOptionIds(buildInitialSelections(item, null));
-              setCustomizing(true);
-            }}
-            style={[
-              styles.menuItem,
-              customizing && drinkId === item.id && styles.activeMenuItem,
-              customizing && drinkId !== item.id && styles.hiddenItem
-            ]}
-          >
-            <View style={styles.menuTextGroup}>
-              <View style={styles.nameRow}>
-                <Text style={styles.menuItemName}>{item.name}</Text>
-                {item.id === storeDrinks[0]?.id ? (
-                  <View style={styles.hotTag}>
-                    <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.hotTagText}>推</Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.menuDescription}>{item.description}</Text>
-            </View>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.menuPrice}>{formatCurrency(item.basePrice)}</Text>
-          </Card>
-        )) : (
-          <EmptyPanel>此分類目前沒有品項。</EmptyPanel>
-        )}
-        {customizing ? (
-          <PrimaryButton label="重新選擇飲料" variant="secondary" onPress={() => setCustomizing(false)} />
-        ) : null}
-      </Section>
+      ) : <View style={styles.menuList}>{drinkCards}</View>}
 
       {customizing ? (
         <>
-          {drink.customizationGroups.map((group) => (
-            <Section key={group.optionType} title={getGroupTitle(group.optionType)}>
+          {customizationGroups.map((group) => (
+            <Section key={group.optionType} title={getGroupTitle(group.optionType)} titleStyle={styles.optionHeading}>
               {group.options.length === 0 || group.maxSelections === 0 ? (
                 <EmptyPanel>{`此飲品不提供${getGroupTitle(group.optionType)}選項。`}</EmptyPanel>
               ) : (
@@ -206,7 +203,7 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
             </Section>
           ))}
 
-          <Section title="數量">
+          <Section title="數量" titleStyle={styles.optionHeading}>
             <QuantityStepper
               decreaseLabel="減少一杯"
               increaseLabel="增加一杯"
@@ -216,7 +213,7 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
             />
           </Section>
 
-          <Section title="小計">
+          <Section title="小計" titleStyle={styles.optionHeading}>
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.subtotal}>{formatCurrency(subtotal)}</Text>
           </Section>
 
@@ -224,6 +221,7 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
             <PrimaryButton
               label={editOrderItem ? "儲存修改" : editOrderId ? "加入訂單並重新預授權" : "加入購物車"}
               onPress={() => {
+                if (submitted) return;
                 const orderItem = buildCartItem({
                   drink,
                   store,
@@ -244,7 +242,6 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
                     current.id === updatedItem.id ? updatedItem : current
                   ));
                   actions.updateOrderItems(editOrderId, nextItems);
-                  setSubmitted(true);
                   navigation.goBack();
                   return;
                 }
@@ -253,7 +250,6 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
                     ...orderItem,
                     targetOrderId: editOrderId,
                   });
-                  setSubmitted(true);
                   setCustomizing(false);
                   setQuantity(1);
                   return;
@@ -262,16 +258,11 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
                   ...orderItem
                 });
                 setSubmitted(true);
-                setCustomizing(false);
-                setQuantity(1);
               }}
             />
-            {submitted ? <Notice message="已加入購物車。" tone="success" /> : null}
           </View>
         </>
-      ) : (
-        <EmptyPanel>請先選擇飲料，再設定甜度、冰塊與加料。</EmptyPanel>
-      )}
+      ) : <Text style={styles.menuHint}>點選飲品，設定客製化選項</Text>}
       {cartQuantity > 0 ? <View style={styles.cartSpacer} /> : null}
       </MobileScreen>
       {cartQuantity > 0 ? (
@@ -290,6 +281,7 @@ function DrinkMenuContent({ navigation, route, appState, actions, selectedCustom
           <View style={styles.floatingCartArrow} />
         </Pressable>
       ) : null}
+      {submitted ? <View style={styles.successToast}><Notice message="已加入購物車。" tone="success" /></View> : null}
     </View>
   );
 }
@@ -358,69 +350,39 @@ const makeStyles = (colors) => StyleSheet.create({
   screenWrap: {
     flex: 1
   },
-  menuHeader: {
-    gap: spacing.s12
-  },
-  menuHero: {
-    gap: spacing.s4
-  },
-  shopName: {
+  groupBuyRow: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
+  groupBuyIcon: { width: 27, height: 25 },
+  groupBuyHeadLeft: { position: "absolute", top: 1, left: 3, width: 9, height: 9, borderWidth: sizes.stroke, borderColor: colors.textSecondary, borderRadius: radii.pill },
+  groupBuyHeadRight: { position: "absolute", top: 1, right: 3, width: 9, height: 9, borderWidth: sizes.stroke, borderColor: colors.textSecondary, borderRadius: radii.pill },
+  groupBuyBodyLeft: { position: "absolute", bottom: 1, left: 0, width: 15, height: 11, borderWidth: sizes.stroke, borderColor: colors.textSecondary, borderBottomWidth: 0, borderTopLeftRadius: radii.pill, borderTopRightRadius: radii.pill },
+  groupBuyBodyRight: { position: "absolute", bottom: 1, right: 0, width: 15, height: 11, borderWidth: sizes.stroke, borderColor: colors.textSecondary, borderBottomWidth: 0, borderTopLeftRadius: radii.pill, borderTopRightRadius: radii.pill },
+  groupBuyActivityName: {
     ...typeScale.sectionTitle,
     color: colors.text
   },
-  groupBuyActivityName: {
-    ...typeScale.bodyDense,
-    color: colors.textSecondary
-  },
-  categoryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.s8
-  },
-  menuItem: {
+  menuHeader: { gap: spacing.s12 },
+  menuList: { gap: spacing.s8 },
+  menuHint: { ...typeScale.bodyDense, color: colors.textSecondary },
+  drinkHero: {
+    minHeight: 150,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.s12
+    gap: spacing.s16,
+    paddingBottom: spacing.s24,
+    borderBottomWidth: 1,
+    borderColor: colors.lineRow
   },
-  // The card keeps its 2px outline box; picking a drink only recolours it.
-  activeMenuItem: {
-    borderColor: colors.accent
-  },
-  hiddenItem: {
-    display: "none"
-  },
-  menuTextGroup: {
-    flex: 1,
-    gap: spacing.s4
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.s8
-  },
-  menuItemName: {
-    ...typeScale.button,
-    flexShrink: 1,
-    color: colors.text
-  },
-  hotTag: {
-    paddingHorizontal: spacing.s8,
-    borderRadius: radii.xs,
+  drinkImageSlot: {
+    width: 104,
+    height: 124,
+    borderRadius: radii.md,
     backgroundColor: colors.recess
   },
-  hotTagText: {
-    ...typeScale.label,
-    color: colors.accentInk
-  },
-  menuDescription: {
-    ...typeScale.caption,
-    color: colors.textSecondary
-  },
-  menuPrice: {
-    ...typeScale.price,
-    color: colors.text
-  },
+  drinkHeroText: { flex: 1, gap: spacing.s12 },
+  drinkHeroName: { ...typeScale.screenTitle, color: colors.text },
+  drinkHeroPrice: { ...typeScale.amount, color: colors.text },
+  drinkHeroDescription: { ...typeScale.bodyDense, color: colors.textSecondary },
+  optionHeading: { ...typeScale.price },
   optionWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -439,7 +401,14 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   // Keeps the last content clear of the floating cart button (only rendered while that button shows).
   cartSpacer: {
-    height: sizes.buttonHeight
+    height: sizes.buttonHeight + spacing.s32 * 2
+  },
+  successToast: {
+    position: "absolute",
+    right: spacing.s20,
+    bottom: sizes.buttonHeight + spacing.s32,
+    left: spacing.s20,
+    zIndex: 2
   },
   pressed: {
     opacity: 0.8

@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from "react-native";
-import { maxFontSizeMultiplier, radii, spacing, typeScale } from "../theme/tokens";
+import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatPickupCode } from "../utils/pickupCode";
 import { useThemedStyles } from "../theme/ThemeContext";
 
@@ -9,7 +9,7 @@ const HINT = "到店取餐時，將此代碼提供給店家。";
 // The pass a customer shows at the counter. The code is the one thing that has to be read at
 // arm's length, so it is the biggest text in the app. One pearl per cup (up to 10) sits under it;
 // the exact cup count is always written out.
-export function PickupPass({ pickupCode, cupCount }) {
+export function PickupPass({ pickupCode, cupCount, showCups = true }) {
   const styles = useThemedStyles(makeStyles);
   const cups = Number.isInteger(cupCount) && cupCount > 0 ? cupCount : 0;
   const spokenCode = String(pickupCode).split("").join(" ");
@@ -18,7 +18,7 @@ export function PickupPass({ pickupCode, cupCount }) {
 
   return (
     <View accessible accessibilityLabel={spokenLabel} style={styles.pass}>
-      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.label}>取餐憑證</Text>
+      <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.label}>六位取餐碼</Text>
       <Text
         adjustsFontSizeToFit
         maxFontSizeMultiplier={maxFontSizeMultiplier}
@@ -27,7 +27,7 @@ export function PickupPass({ pickupCode, cupCount }) {
       >
         {formatPickupCode(pickupCode)}
       </Text>
-      {cups > 0 ? (
+      {showCups && cups > 0 ? (
         <View style={styles.cupsRow}>
           <View style={styles.pearls}>
             {Array.from({ length: Math.min(cups, MAX_PASS_PEARLS) }, (_, index) => (
@@ -48,16 +48,18 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: spacing.s12,
     paddingVertical: spacing.s24,
     paddingHorizontal: spacing.s16,
-    borderRadius: radii.lg,
-    backgroundColor: colors.text
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page
   },
   label: {
     ...typeScale.button,
-    color: colors.onDark
+    color: colors.text
   },
   code: {
     ...typeScale.pickupCode,
-    color: colors.onDark,
+    color: colors.accentInk,
     letterSpacing: 4,
     // RN adds the letter spacing after the last digit too; this puts it back in the middle.
     paddingLeft: 4,
@@ -77,15 +79,15 @@ const makeStyles = (colors) => StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: colors.onDark
+    backgroundColor: colors.accent
   },
   cups: {
     ...typeScale.bodyDense,
-    color: colors.onDark
+    color: colors.textSecondary
   },
   hint: {
     ...typeScale.bodyDense,
-    color: colors.onDark,
+    color: colors.text,
     textAlign: "center"
   }
 });

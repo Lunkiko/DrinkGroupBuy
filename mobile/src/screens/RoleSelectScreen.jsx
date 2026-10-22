@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   getAuthMode,
   listDevAuthUsers,
   loginWithDevUser,
   loginWithFirebaseIdToken
 } from "../utils/apiClient";
-import { signOutFirebaseUser, useFirebaseEmailLogin, useFirebaseGoogleLogin } from "../utils/firebaseAuth";
+import { signOutFirebaseUser, useFirebaseGoogleLogin } from "../utils/firebaseAuth";
 import { getRouteForUser } from "../utils/authRouting";
 import { isDemoMode } from "../utils/demoMode";
 import { demoCustomerUserId, demoMerchantStoreId, demoMerchantUserProfile, demoUserProfile } from "../mock/demoContent";
 import { useAppState } from "../state/AppStateContext";
 import { useTheme, useThemedStyles } from "../theme/ThemeContext";
+import { brandColors, radii, sizes, typeScale } from "../theme/tokens";
 
 export function RoleSelectScreen(props) {
   // Checked before the dev-auth branch: unlike EXPO_PUBLIC_AUTH_MODE=dev (which still calls the
@@ -45,56 +46,47 @@ function DemoRoleSelectContent({ navigation }) {
 
       <View style={styles.actionStack}>
         <LoginOptionButton
-          icon="G"
-          iconStyle={styles.googleIcon}
+          icon={GOOGLE_ICON}
           label="使用 Google 登入／註冊"
           onPress={() => selectRole("customer", { userId: demoCustomerUserId }, demoUserProfile)}
         />
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => selectRole("merchant", { storeId: demoMerchantStoreId }, demoMerchantUserProfile)}
-          style={({ pressed }) => [styles.textButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.textButtonLabel}>店家示範登入</Text>
-        </Pressable>
       </View>
 
       <Pressable
         accessibilityRole="button"
         onPress={() => navigation.navigate("merchantApply")}
-        style={({ pressed }) => [styles.textButton, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.merchantApply, pressed && styles.pressed]}
       >
-        <Text style={styles.textButtonLabel}>申請成為商家</Text>
+        <Text style={styles.merchantApplyLabel}>申請成為商家</Text>
       </Pressable>
 
       <Text style={styles.terms}>
-        登入代表你同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
+        登入代表您同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
       </Text>
       <Text style={styles.version}>揪飲 JOIN!</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => selectRole("merchant", { storeId: demoMerchantStoreId }, demoMerchantUserProfile)}
+        style={({ pressed }) => [styles.demoEntry, pressed && styles.pressed]}
+      >
+        <Text style={styles.textButtonLabel}>店家示範登入</Text>
+      </Pressable>
     </ScrollView>
   );
 }
 
 function FirebaseRoleSelectScreen(props) {
   const googleLogin = useFirebaseGoogleLogin();
-  const emailLogin = useFirebaseEmailLogin();
-  return <RoleSelectContent {...props} isDevAuthMode={false} googleLogin={googleLogin} emailLogin={emailLogin} />;
+  return <RoleSelectContent {...props} isDevAuthMode={false} googleLogin={googleLogin} />;
 }
 
-function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emailLogin = null }) {
+function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null }) {
   const styles = useThemedStyles(makeStyles);
-  const { colors } = useTheme();
   const { selectRole } = useAppState();
   const { signInWithGoogle } = googleLogin || {};
-  const { signInWithEmail, signUpWithEmail, resetPassword } = emailLogin || {};
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [signedInUser, setSignedInUser] = useState(null);
-  const [emailMode, setEmailMode] = useState("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [emailStatus, setEmailStatus] = useState("");
-  const [isEmailBusy, setIsEmailBusy] = useState(false);
   const [devUsers, setDevUsers] = useState([]);
   const [selectedDevUserId, setSelectedDevUserId] = useState("");
   const [isDevDropdownOpen, setIsDevDropdownOpen] = useState(false);
@@ -134,8 +126,7 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
     };
   }, [isDevAuthMode, devUsersRetryToken]);
 
-  // Shared by every Firebase-backed login path (Google, email/password) -- not devLogin, which
-  // has no Firebase result and builds signedInUser from a different shape entirely.
+  // The Google login path receives a Firebase result; devLogin builds a different user shape.
   const completeFirebaseLogin = async (firebaseResult) => {
     const backendResult = await loginWithFirebaseIdToken(firebaseResult.firebaseIdToken);
     setSignedInUser({
@@ -163,52 +154,6 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
     } finally {
       setIsLoggingIn(false);
     }
-  };
-
-  // Shared busy/status/error scaffold for every email-form action (sign in, sign up, forgot
-  // password) -- each just supplies what happens on success.
-  const runEmailAction = async (action) => {
-    setIsEmailBusy(true);
-    setEmailStatus("");
-    try {
-      await action();
-    } catch (error) {
-      setEmailStatus(getLoginErrorMessage(error));
-    } finally {
-      setIsEmailBusy(false);
-    }
-  };
-
-  const submitEmailForm = async () => {
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password) return;
-    setLoginError("");
-
-    await runEmailAction(async () => {
-      if (emailMode === "signup") {
-        await signUpWithEmail(trimmedEmail, password);
-        setEmailStatus("帳號已建立，請到信箱點擊驗證連結；驗證後再回來登入。");
-        setEmailMode("signin");
-        setPassword("");
-        return;
-      }
-
-      const firebaseResult = await signInWithEmail(trimmedEmail, password);
-      await completeFirebaseLogin(firebaseResult);
-    });
-  };
-
-  const forgotPassword = async () => {
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setEmailStatus("請先輸入信箱，再點擊忘記密碼。");
-      return;
-    }
-
-    await runEmailAction(async () => {
-      await resetPassword(trimmedEmail);
-      setEmailStatus("已寄出重設密碼信，請到信箱查看。");
-    });
   };
 
   const devLogin = async () => {
@@ -259,54 +204,8 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
         ) : null}
 
         {!isDevAuthMode ? (
-          <View style={styles.emailPanel}>
-            {emailStatus ? <Text style={styles.emailStatus}>{emailStatus}</Text> : null}
-            <TextInput
-              accessibilityLabel="信箱"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              placeholder="信箱"
-              placeholderTextColor={colors.textSecondary}
-              style={styles.emailInput}
-              value={email}
-            />
-            <TextInput
-              accessibilityLabel="密碼"
-              autoCapitalize="none"
-              onChangeText={setPassword}
-              placeholder="密碼"
-              placeholderTextColor={colors.textSecondary}
-              secureTextEntry
-              style={styles.emailInput}
-              value={password}
-            />
-            <LoginOptionButton
-              compact
-              label={isEmailBusy ? "處理中..." : emailMode === "signin" ? "登入" : "建立帳號"}
-              disabled={isEmailBusy || !email.trim() || !password}
-              onPress={() => !isEmailBusy && submitEmailForm()}
-            />
-            {/* Self-service email signup is temporarily Google-only (backend rejects it at
-                POST /api/auth/firebase-session regardless) -- this entry point into emailMode
-                "signup" stays out of the UI until that policy changes, not removed outright. */}
-            {emailMode === "signin" ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => !isEmailBusy && forgotPassword()}
-                style={({ pressed }) => [styles.textButton, pressed && styles.pressed]}
-              >
-                <Text style={styles.textButtonLabel}>忘記密碼</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
-
-        {!isDevAuthMode ? (
           <LoginOptionButton
-            icon="G"
-            iconStyle={styles.googleIcon}
+            icon={GOOGLE_ICON}
             label={isLoggingIn ? "登入中..." : "使用 Google 登入／註冊"}
             disabled={isLoggingIn}
             onPress={() => !isLoggingIn && login()}
@@ -379,13 +278,13 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
       <Pressable
         accessibilityRole="button"
         onPress={() => navigation.navigate("merchantApply")}
-        style={({ pressed }) => [styles.textButton, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.merchantApply, pressed && styles.pressed]}
       >
-        <Text style={styles.textButtonLabel}>申請成為商家</Text>
+        <Text style={styles.merchantApplyLabel}>申請成為商家</Text>
       </Pressable>
 
       <Text style={styles.terms}>
-        登入代表你同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
+        登入代表您同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
       </Text>
       <Text style={styles.version}>揪飲 JOIN!</Text>
     </ScrollView>
@@ -397,6 +296,7 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null, emai
 // halo around it looked wrong (2026-10-06), so the logo is light-mode only for now.
 const HERO_LIGHT = require("../../assets/login-logo-light.png");
 const HERO_DARK = require("../../assets/login-hero-dark.png");
+const GOOGLE_ICON = require("../../assets/google-g.png");
 
 function LoginHeroIllustration() {
   const styles = useThemedStyles(makeStyles);
@@ -411,7 +311,7 @@ function LoginHeroIllustration() {
   );
 }
 
-function LoginOptionButton({ icon, iconStyle, label, onPress, disabled = false, compact = false }) {
+function LoginOptionButton({ icon, label, onPress, disabled = false, compact = false }) {
   const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
@@ -426,7 +326,11 @@ function LoginOptionButton({ icon, iconStyle, label, onPress, disabled = false, 
         pressed && !disabled && styles.pressed
       ]}
     >
-      {icon ? <Text style={[styles.loginIcon, compact && styles.compactLoginIcon, iconStyle]}>{icon}</Text> : null}
+      {icon ? (
+        <View style={styles.loginIconBackground}>
+          <Image source={icon} style={styles.loginIcon} resizeMode="contain" accessibilityIgnoresInvertColors />
+        </View>
+      ) : null}
       <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.loginButtonLabel, compact && styles.compactLoginButtonLabel]}>{label}</Text>
     </Pressable>
   );
@@ -535,87 +439,66 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 30,
-    paddingTop: 28,
-    paddingBottom: 22
+    paddingHorizontal: 28,
+    paddingTop: 68,
+    paddingBottom: 28
   },
   hero: {
+    flexGrow: 1,
+    minHeight: 370,
     alignItems: "center",
-    marginTop: 24,
-    marginBottom: 14
+    justifyContent: "center"
   },
   illustration: {
-    width: 282,
-    height: 246
+    width: 260,
+    height: 225
   },
   logo: {
-    width: 200,
-    height: 254
+    width: 260,
+    height: 330
   },
   actionStack: {
     gap: 10
   },
   loginButton: {
-    minHeight: 58,
+    minHeight: 62,
     width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 14,
-    borderWidth: 1,
+    gap: 12,
+    borderRadius: radii.sm,
+    borderWidth: sizes.stroke,
     borderColor: colors.accent,
     backgroundColor: colors.page,
-    paddingHorizontal: 18
+    paddingHorizontal: 14
   },
   compactLoginButton: {
-    minHeight: 42,
+    minHeight: sizes.tap,
     paddingHorizontal: 14
   },
   loginButtonDisabled: {
     opacity: 0.62
   },
+  loginIconBackground: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.pill,
+    backgroundColor: brandColors.googleLogoBackground,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   loginIcon: {
-    position: "absolute",
-    left: 18,
     width: 28,
-    textAlign: "center",
-    fontSize: 18,
-    fontWeight: "900"
-  },
-  compactLoginIcon: {
-    left: 14,
-    fontSize: 17
-  },
-  googleIcon: {
-    color: colors.accentInk
+    height: 28
   },
   loginButtonLabel: {
     color: colors.text,
-    fontSize: 18,
-    fontWeight: "900",
+    ...typeScale.loginAction,
     textAlign: "center"
   },
   compactLoginButtonLabel: {
-    fontSize: 15
-  },
-  emailPanel: {
-    gap: 8
-  },
-  emailStatus: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 17
-  },
-  emailInput: {
-    minHeight: 46,
-    borderWidth: 1.3,
-    borderColor: colors.lineInput,
-    borderRadius: 5,
-    backgroundColor: colors.page,
-    color: colors.text,
-    fontSize: 14,
-    paddingHorizontal: 12
+    fontSize: typeScale.body.fontSize
   },
   userCard: {
     minHeight: 72,
@@ -640,7 +523,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   userAvatarText: {
     color: colors.onAccent,
     fontSize: 18,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   userInfo: {
     flex: 1,
@@ -649,12 +532,12 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   userLabel: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   userName: {
     color: colors.text,
     fontSize: 16,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   userMeta: {
     color: colors.textSecondary,
@@ -662,19 +545,35 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     fontWeight: "700"
   },
   textButton: {
-    minHeight: 38,
+    minHeight: sizes.tap,
     alignItems: "center",
     justifyContent: "center"
   },
   textButtonLabel: {
     color: colors.accentInk,
     fontSize: 14,
-    fontWeight: "900"
+    fontWeight: "700"
+  },
+  merchantApply: {
+    minHeight: sizes.tap,
+    marginTop: 28,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  merchantApplyLabel: {
+    color: colors.accentInk,
+    ...typeScale.price
+  },
+  demoEntry: {
+    minHeight: sizes.tap,
+    marginTop: 48,
+    alignItems: "center",
+    justifyContent: "center"
   },
   errorText: {
     color: tones.danger.fg,
     fontSize: 13,
-    fontWeight: "900",
+    fontWeight: "700",
     lineHeight: 19,
     borderRadius: 6,
     backgroundColor: tones.danger.bg,
@@ -699,7 +598,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   devTitle: {
     color: colors.text,
     fontSize: 16,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   devBadge: {
     overflow: "hidden",
@@ -707,7 +606,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     backgroundColor: tones.info.bg,
     color: tones.info.fg,
     fontSize: 11,
-    fontWeight: "900",
+    fontWeight: "700",
     paddingHorizontal: 8,
     paddingVertical: 4
   },
@@ -734,17 +633,17 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   dropdownLabel: {
     color: colors.textSecondary,
     fontSize: 11,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   dropdownValue: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   dropdownIcon: {
     color: colors.accentInk,
     fontSize: 14,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   optionList: {
     overflow: "hidden",
@@ -768,7 +667,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   optionText: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   optionMeta: {
     color: colors.textSecondary,
@@ -776,22 +675,20 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     fontWeight: "700"
   },
   terms: {
-    marginTop: 26,
+    marginTop: 24,
     color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: "700",
-    lineHeight: 22,
+    ...typeScale.body,
     textAlign: "center"
   },
   termsLink: {
     color: colors.accentInk,
-    fontWeight: "900"
+    fontWeight: "700",
+    textDecorationLine: "underline"
   },
   version: {
-    marginTop: 20,
+    marginTop: 52,
     color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: "700",
+    ...typeScale.button,
     textAlign: "center"
   },
   pressed: {

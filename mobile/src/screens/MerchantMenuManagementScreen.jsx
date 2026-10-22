@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { TonePill } from "../components/TonePill";
+import { getMenuCategoryLabel } from "../components/CustomerMenuParts";
 import {
   createMerchantMenuItem,
   getMerchantStoreMenu,
@@ -9,6 +11,7 @@ import {
 } from "../utils/apiClient";
 import { formatCurrency } from "../utils/calculations";
 import { useTheme, useThemedStyles } from "../theme/ThemeContext";
+import { radii, sizes, spacing, typeScale } from "../theme/tokens";
 
 let nextLocalRowId = 1;
 function createLocalRowId() {
@@ -55,6 +58,12 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
   const [form, setForm] = useState(() => createEmptyForm());
   const [formVisible, setFormVisible] = useState(false);
   const [formNotice, setFormNotice] = useState(null);
+  const [addedCategories, setAddedCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [categoryFormVisible, setCategoryFormVisible] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryNotice, setCategoryNotice] = useState(null);
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
 
   async function loadMenu() {
     setLoading(true);
@@ -69,6 +78,8 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
   }
 
   useEffect(() => {
+    setAddedCategories([]);
+    setSelectedCategory("all");
     loadMenu();
   }, [selectedMerchantStoreId]);
 
@@ -78,14 +89,16 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
     [form.optionLists.topping]
   );
   const existingCategories = useMemo(
-    () => [...new Set((menu?.menuItems || []).map((item) => item.category).filter(Boolean))],
-    [menu?.menuItems]
+    () => [...new Set([...(menu?.menuItems || []).map((item) => item.category), ...addedCategories].filter(Boolean))],
+    [menu?.menuItems, addedCategories]
   );
+  const displayedItems = (menu?.menuItems || []).filter((item) => selectedCategory === "all" || item.category === selectedCategory);
 
   function beginCreate() {
     setEditingItem(null);
-    setForm(createEmptyForm());
+    setForm({ ...createEmptyForm(), category: selectedCategory !== "all" ? selectedCategory : existingCategories[0] || "茶類" });
     setFormNotice(null);
+    setCategoryDropdownOpen(false);
     setFormVisible(true);
   }
 
@@ -93,12 +106,31 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
     setEditingItem(item);
     setForm(formFromMenuItem(item));
     setFormNotice(null);
+    setCategoryDropdownOpen(false);
     setFormVisible(true);
   }
 
   function closeForm() {
     setFormVisible(false);
     setFormNotice(null);
+    setCategoryDropdownOpen(false);
+  }
+
+  function addCategory() {
+    const name = newCategoryName.trim();
+    if (!name || name.length > 12 || !/[\u3400-\u9FFF]/u.test(name) || /[A-Za-z]/.test(name)) {
+      setCategoryNotice("請輸入 1 至 12 字的中文分類名稱。");
+      return;
+    }
+    if (existingCategories.some((category) => getMenuCategoryLabel(category) === name)) {
+      setCategoryNotice("此分類已存在，請直接選用。");
+      return;
+    }
+    setAddedCategories((current) => [...current, name]);
+    setSelectedCategory(name);
+    setNewCategoryName("");
+    setCategoryNotice(null);
+    setCategoryFormVisible(false);
   }
 
   function addOptionRow(optionType) {
@@ -217,27 +249,28 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
         </Pressable>
       )}
     >
-      <Section title="飲品清單">
+      <View style={styles.categorySection}>
+        <View style={styles.categoryHeader}>
+          <Text style={styles.categoryHeading}>飲品分類</Text>
+          <Pressable accessibilityRole="button" onPress={() => { setNewCategoryName(""); setCategoryNotice(null); setCategoryFormVisible(true); }} style={styles.addCategoryButton}><Text style={styles.addCategoryText}>＋ 新增</Text></Pressable>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryFilters}>
+          {[{ id: "all", label: "全部" }, ...existingCategories.map((id) => ({ id, label: getMenuCategoryLabel(id) }))].map(({ id, label }) => (
+            <Pressable key={id} accessibilityRole="button" accessibilityState={{ selected: selectedCategory === id }} onPress={() => setSelectedCategory(id)} style={[styles.categoryFilter, selectedCategory === id && styles.categoryFilterActive]}><Text style={[styles.categoryFilterText, selectedCategory === id && styles.categoryFilterTextActive]}>{label}</Text></Pressable>
+          ))}
+        </ScrollView>
+      </View>
+      <Section title="飲品清單" headerRight={<Text style={styles.count}>共 {displayedItems.length} 款</Text>}>
         {loading ? <Text style={styles.meta}>載入中…</Text> : null}
         {listNotice ? (
           <Text style={listNotice.type === "error" ? styles.error : styles.success}>{listNotice.text}</Text>
         ) : null}
-        {!loading && menu?.menuItems?.length === 0 ? <Text style={styles.meta}>目前沒有飲品。</Text> : null}
-        {(menu?.menuItems || []).map((item) => {
-          const toppingRule = item.customizationGroups.find((group) => group.optionType === "topping");
+        {!loading && displayedItems.length === 0 ? <Text style={styles.emptyText}>{selectedCategory === "all" ? "目前沒有飲品。" : "此分類目前沒有飲品。"}</Text> : null}
+        {displayedItems.map((item) => {
           return (
             <View key={item.id} style={styles.itemCard}>
-              <View style={styles.row}>
-                <View style={styles.flex}>
-                  <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.meta}>{item.category} · {formatCurrency(item.basePrice)}</Text>
-                  <Text style={styles.meta}>加料上限：{toppingRule?.maxSelections ?? 0}</Text>
-                </View>
-                <Text style={item.isAvailable ? styles.available : styles.unavailable}>
-                  {item.isAvailable ? "上架" : "停售"}
-                </Text>
-              </View>
-              <PrimaryButton label="編輯" variant="secondary" onPress={() => beginEdit(item)} />
+              <View style={styles.itemInfo}><Text numberOfLines={1} style={styles.itemName}>{item.name}</Text><Text style={styles.itemCategory}>{getMenuCategoryLabel(item.category)}</Text></View>
+              <View style={styles.itemRight}><TonePill tone={item.isAvailable ? "success" : "danger"} label={item.isAvailable ? "上架中" : "停售中"} /><View style={styles.itemBottom}><Text style={styles.itemPrice}>{formatCurrency(item.basePrice)}</Text><Pressable accessibilityRole="button" accessibilityLabel={`編輯${item.name}`} onPress={() => beginEdit(item)}><Text style={styles.editLink}>編輯 ›</Text></Pressable></View></View>
             </View>
           );
         })}
@@ -250,27 +283,7 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
         onClose={closeForm}
       >
         <Field label="品名" value={form.name} onChangeText={(value) => setFormField(setForm, "name", value)} />
-        <Field
-          label="分類名稱（會直接顯示給顧客看，請填中文，例如：奶茶類、茶類、果汁類；同一家店建議固定用同幾種）"
-          value={form.category}
-          onChangeText={(value) => setFormField(setForm, "category", value)}
-        />
-        {existingCategories.length > 0 ? (
-          <View style={styles.categoryChipRow}>
-            {existingCategories.map((category) => (
-              <Pressable
-                key={category}
-                accessibilityRole="button"
-                onPress={() => setFormField(setForm, "category", category)}
-                style={[styles.categoryChip, form.category === category && styles.categoryChipActive]}
-              >
-                <Text style={[styles.categoryChipText, form.category === category && styles.categoryChipTextActive]}>
-                  {category}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
+        <View style={styles.field}><Text style={styles.label}>飲品分類</Text><Pressable accessibilityRole="button" accessibilityState={{ expanded: categoryDropdownOpen }} onPress={() => setCategoryDropdownOpen((open) => !open)} style={styles.dropdownButton}><Text style={styles.dropdownText}>{getMenuCategoryLabel(form.category)}</Text><Text style={styles.dropdownArrow}>{categoryDropdownOpen ? "⌃" : "⌄"}</Text></Pressable>{categoryDropdownOpen ? <View style={styles.dropdownOptions}>{[...new Set([...existingCategories, form.category])].map((category) => <Pressable key={category} accessibilityRole="button" onPress={() => { setFormField(setForm, "category", category); setCategoryDropdownOpen(false); }} style={styles.dropdownOption}><Text style={styles.dropdownText}>{getMenuCategoryLabel(category)}</Text></Pressable>)}</View> : null}</View>
         <Field label="說明" value={form.description} onChangeText={(value) => setFormField(setForm, "description", value)} multiline />
         <Field label="基本價格" value={form.basePrice} onChangeText={(value) => setFormField(setForm, "basePrice", digitsOnly(value))} keyboardType="number-pad" />
         <OptionRowsField optionType="size" rows={form.optionLists.size} onAdd={addOptionRow} onRemove={removeOptionRow} onUpdate={updateOptionRow} />
@@ -298,6 +311,11 @@ export function MerchantMenuManagementScreen({ selectedMerchantStoreId }) {
             {formNotice.text}
           </Text>
         ) : null}
+      </MenuItemFormModal>
+      <MenuItemFormModal visible={categoryFormVisible} title="新增飲品分類" onClose={() => setCategoryFormVisible(false)}>
+        <Field label="分類名稱" value={newCategoryName} maxLength={12} onChangeText={setNewCategoryName} placeholder="例如：茶類、奶茶類、特調類" />
+        {categoryNotice ? <Text style={styles.error}>{categoryNotice}</Text> : null}
+        <PrimaryButton label="新增分類" onPress={addCategory} />
       </MenuItemFormModal>
     </>
   );
@@ -453,17 +471,16 @@ function digitsOnly(value) {
 const makeStyles = (colors, tones) => StyleSheet.create({
   pressed: { opacity: 0.75 },
   addButton: {
-    minHeight: 32,
-    borderRadius: 999,
+    minHeight: sizes.tap,
+    borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
+    paddingHorizontal: spacing.s12,
     backgroundColor: colors.recess
   },
   addButtonText: {
     color: colors.accentInk,
-    fontSize: 13,
-    fontWeight: "900"
+    ...typeScale.button
   },
   modalOverlay: {
     flex: 1,
@@ -489,7 +506,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     flex: 1,
     color: colors.text,
     fontSize: 18,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   modalCloseButton: {
     width: 32,
@@ -500,7 +517,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   modalCloseIcon: {
     color: colors.textSecondary,
     fontSize: 16,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   modalScroll: {
     flexGrow: 0
@@ -509,31 +526,47 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     gap: 12,
     paddingBottom: 18
   },
-  itemCard: { gap: 8, borderWidth: 1, borderColor: colors.lineRow, borderRadius: 12, padding: 11 },
-  row: { flexDirection: "row", gap: 10, justifyContent: "space-between" },
-  flex: { flex: 1 },
-  itemName: { color: colors.text, fontSize: 15, fontWeight: "900" },
+  categorySection: { gap: spacing.s12 },
+  categoryHeader: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
+  categoryHeading: { ...typeScale.sectionTitle, color: colors.text },
+  addCategoryButton: { minHeight: sizes.tap, borderWidth: sizes.stroke, borderColor: colors.accent, borderRadius: radii.pill, justifyContent: "center", paddingHorizontal: spacing.s16 },
+  addCategoryText: { ...typeScale.button, color: colors.accentInk },
+  categoryFilters: { gap: spacing.s8, paddingRight: spacing.s20 },
+  categoryFilter: { minWidth: 84, minHeight: sizes.tap, paddingHorizontal: spacing.s16, borderRadius: radii.pill, backgroundColor: colors.recess, justifyContent: "center", alignItems: "center" },
+  categoryFilterActive: { borderWidth: sizes.stroke, borderColor: colors.accent, backgroundColor: colors.page },
+  categoryFilterText: { ...typeScale.button, color: colors.textSecondary },
+  categoryFilterTextActive: { color: colors.accentInk },
+  count: { ...typeScale.body, color: colors.textSecondary },
+  emptyText: { ...typeScale.body, color: colors.textSecondary, paddingVertical: spacing.s20 },
+  itemCard: { flexDirection: "row", justifyContent: "space-between", gap: spacing.s12, borderWidth: 1, borderColor: colors.lineDecor, borderRadius: radii.md, padding: spacing.s16 },
+  itemInfo: { flex: 1, justifyContent: "space-between", gap: spacing.s12 },
+  itemRight: { alignItems: "flex-end", justifyContent: "space-between", gap: spacing.s8 },
+  itemBottom: { flexDirection: "row", alignItems: "center", gap: spacing.s16 },
+  itemName: { ...typeScale.price, color: colors.text },
+  itemCategory: { ...typeScale.body, color: colors.textSecondary },
+  itemPrice: { ...typeScale.price, color: colors.text },
+  editLink: { ...typeScale.button, color: colors.accentInk },
   meta: { color: colors.textSecondary, fontSize: 12, lineHeight: 18 },
-  available: { color: tones.success.fg, fontSize: 12, fontWeight: "900" },
-  unavailable: { color: tones.danger.fg, fontSize: 12, fontWeight: "900" },
+  available: { color: tones.success.fg, fontSize: 12, fontWeight: "700" },
+  unavailable: { color: tones.danger.fg, fontSize: 12, fontWeight: "700" },
   field: { gap: 5 },
-  label: { color: colors.textSecondary, fontSize: 12, fontWeight: "800" },
-  categoryChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: -2 },
-  categoryChip: { minHeight: 32, paddingHorizontal: 12, justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: colors.lineInput, backgroundColor: colors.recess },
-  categoryChipActive: { borderColor: colors.accent, backgroundColor: colors.recess },
-  categoryChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: "700" },
-  categoryChipTextActive: { color: colors.accentInk },
+  label: { color: colors.textSecondary, fontSize: 12, fontWeight: "700" },
+  dropdownButton: { minHeight: sizes.tap, borderWidth: 1, borderColor: colors.lineInput, borderRadius: radii.xs, backgroundColor: colors.page, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.s12 },
+  dropdownText: { ...typeScale.body, color: colors.text },
+  dropdownArrow: { ...typeScale.button, color: colors.textSecondary },
+  dropdownOptions: { borderWidth: 1, borderColor: colors.lineInput, borderRadius: radii.xs, overflow: "hidden" },
+  dropdownOption: { minHeight: sizes.tap, justifyContent: "center", paddingHorizontal: spacing.s12, borderBottomWidth: 1, borderBottomColor: colors.lineRow },
   input: { minHeight: 46, borderWidth: 1, borderColor: colors.lineInput, borderRadius: 10, backgroundColor: colors.page, color: colors.text, paddingHorizontal: 11, paddingVertical: 9 },
   multiline: { minHeight: 72, textAlignVertical: "top" },
   optionRow: { flexDirection: "row", gap: 6, alignItems: "center" },
   optionRowLabelInput: { flex: 2, minWidth: 0 },
   optionRowPriceInput: { flex: 1, minWidth: 0 },
   optionRowRemoveButton: { minHeight: 46, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: tones.danger.bg },
-  optionRowRemoveText: { color: tones.danger.fg, fontSize: 12, fontWeight: "900" },
+  optionRowRemoveText: { color: tones.danger.fg, fontSize: 12, fontWeight: "700" },
   toggle: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: tones.danger.bg },
   toggleActive: { backgroundColor: tones.success.bg },
-  toggleText: { color: tones.danger.fg, fontWeight: "900" },
+  toggleText: { color: tones.danger.fg, fontWeight: "700" },
   toggleTextActive: { color: tones.success.fg },
-  error: { color: tones.danger.fg, fontSize: 12, fontWeight: "800" },
-  success: { color: tones.success.fg, fontSize: 12, fontWeight: "800" }
+  error: { color: tones.danger.fg, fontSize: 12, fontWeight: "700" },
+  success: { color: tones.success.fg, fontSize: 12, fontWeight: "700" }
 });

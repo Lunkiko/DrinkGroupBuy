@@ -10,6 +10,10 @@ export const colors = {
   textSecondary: "#4A5F8A", // secondary text ("slate blue"); only on page or recess
   accent: "#2563EB", // solid fill of tappable things (text: onAccent) and 2px drawn outlines ("brand blue")
   accentInk: "#1D4ED8", // links and the text of selected labels
+  progress: "#F9B819", // warm fill for the home activity progress bar
+  progressTrack: "#FFF1C4", // pale track behind the warm progress fill
+  warmInk: "#C2410C", // orange emphasis on the blueprint's active group-buy card
+  linePayInk: "#00852F", // LINE Pay wordmark on light cards
   onAccent: "#FFFFFF", // text on an accent fill
   onDark: "#EAF4FF", // text on the panel filled with `text` (the pickup code)
   lineDecor: "#BFDBFE", // decorative card outline on customer screens ("light blue"); carries no meaning
@@ -39,6 +43,10 @@ export const darkColors = {
   textSecondary: "#A5B8D9",
   accent: "#60A5FA",
   accentInk: "#BFDBFE",
+  progress: "#F9B819",
+  progressTrack: "#3A2C14",
+  warmInk: "#FDBA74",
+  linePayInk: "#80E5A2",
   onAccent: "#0B1220",
   onDark: "#172554",
   lineDecor: "#1E3F7A",
@@ -73,6 +81,9 @@ export const darkMapColors = {
   waterText: "#4E7A96"
 };
 
+// Google's multicolour sign-in mark stays on white in both themes.
+export const brandColors = { googleLogoBackground: "#FFFFFF" };
+
 export const radii = { xs: 8, sm: 14, md: 20, lg: 28, pill: 999 };
 
 // Multiples of 4.
@@ -97,6 +108,7 @@ export const typeScale = {
   screenTitle: { fontSize: 24, lineHeight: 32, fontWeight: "700" },
   sectionTitle: { fontSize: 17, lineHeight: 24, fontWeight: "700" },
   price: { fontSize: 18, lineHeight: 24, fontWeight: "700" },
+  loginAction: { fontSize: 20, lineHeight: 28, fontWeight: "700" },
   button: { fontSize: 16, lineHeight: 22, fontWeight: "700" },
   body: { fontSize: 15, lineHeight: 23, fontWeight: "400" },
   bodyDense: { fontSize: 14, lineHeight: 20, fontWeight: "400" }, // merchant screens

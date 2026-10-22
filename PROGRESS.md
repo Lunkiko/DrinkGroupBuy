@@ -23,6 +23,8 @@ updated: 2026-10-22
 - Firebase Auth + Google 登入 [進行中]
   > 讓使用者可以直接用自己的 Google 帳號登入，不用另外設一組新密碼；背後用 Google 官方的身份驗證服務（Firebase Auth）確認身份是真的。這個功能核心就是串接 Google／Firebase 這個第三方服務，不是自己設計的業務邏輯，所以底下不分「前端畫面」「後端 API」，直接歸類成第三方服務整合。
   - Mobile 端（第三方服務整合） [完成] — Google 登入畫面，取得 Firebase ID token 送到 backend；按鈕文案已改為「使用 Google 登入／註冊」，反映第一次登入即完成註冊
+  - 登入頁藍圖版面 [進行中] (10/21) — 已在 `ui/blueprint-screens` 調整品牌圖、Google 按鈕、商家申請與條款排版；375px 網頁淺色／深色預覽無畫面錯誤，離線顧客與店家入口可進入對應畫面，Mobile 測試 80/80 通過。尚待 Android 實機檢查與 PR 審核；條款及隱私政策目前沒有文件可連結。
+    > 讓手機登入頁的外觀符合團隊提供的藍圖，並在不同主題與手機尺寸下維持可讀、可操作。
   - Backend 端（第三方服務整合） [完成] — 驗證 ID token，依 users/user_roles/merchant_users 判斷身份
   - 顧客首次登入自動註冊 [完成] (9/11)
     > 第一次用 Google 帳號登入的人，系統自動幫他建立顧客帳號，不用工程師手動把這個 Google 帳號對應進資料庫。以前完全沒有這個功能：任何沒有被預先手動對應好的 Google 帳號登入一律被拒絕（回傳「帳號未對應」錯誤），這個專案第一次有「一般使用者自己登入就能建立正式帳號」的路徑。新帳號一律只拿到顧客角色，不能自己取得商家或管理員身份。
@@ -48,9 +50,9 @@ updated: 2026-10-22
   - 《開發》本機一鍵登入 [完成] — 本機開發模式（`AUTH_DEV_MODE=true`＋只限本機連線）下，登入頁多一顆按鈕可跳過輸入密碼；初版寫成單純 `GET` 就自動登入，複查時發現這樣任何跨來源背景請求都能被動觸發，已改成需要真人點擊按鈕才會送出的同源請求，見 `docs/AI-security-review-log.md` 2026-09-11 第五次追加。
   - 《審查》身份驗證安全複查 [完成] — 檢查自助建立帳號是否可能直接取得管理員權限、信箱驗證是否可被略過、新登入路徑是否繞過既有登入失敗鎖定、SQL injection、機密外洩；結果見 `docs/AI-security-review-log.md` 2026-09-11 第五次追加，發現一個中風險問題（本機一鍵登入的被動觸發風險）已在同一輪修正。
   - 《驗證》[完成] (9/12) — 使用者在 Firebase Console 開啟 Email/Password 登入方式後，用真實帳號（`admin@example.com`）實際登入 `/admin`。過程中發現並修好一個 bug：`POST /admin/login/firebase` 誤判每一個成功登入的帳號都是「已停用」（讀取一個 repository 查詢從未回傳過的 `user.status` 欄位），導致修復前所有信箱密碼登入一律被擋下；修好後重新測試成功進入後台首頁。`npm test` 115/115 全過，見 `docs/AI-security-review-log.md` 2026-09-12 第二次追加。本機端對端驗證完整，Azure 部署後的驗證仍待補。
-- 顧客／商家信箱密碼登入 [進行中] (9/12)
-  > 手機 App 登入頁除了 Google 登入，也能用信箱＋密碼登入／註冊，重用管理員那套 Firebase 機制。跟管理員不同：不需要額外被授予角色，第一次登入成功即自動拿到顧客角色，跟現有 Google 登入行為一致；商家身份仍須另外走商家申請審核，不因登入方式而不同。信箱必須先完成驗證才能真正登入，避免用打錯或非本人的信箱下單、事後聯絡不到人。
-  - 《開發》登入頁信箱表單 [完成] — `RoleSelectScreen.jsx` 新增信箱密碼表單（可切換「建立帳號」）與「忘記密碼」，`firebaseAuth.js` 新增 `useFirebaseEmailLogin`（`signUpWithEmail`／`signInWithEmail`／`resetPassword`）；後端 `POST /api/auth/firebase-session` 新增 `email_verified` 檢查，只影響第一次登入的自動註冊分支，既有 Google 登入（信箱天生已驗證）不受影響，錯誤訊息也從「Google 帳號」改成通用說法。
+- 顧客／商家信箱密碼登入 [暫緩] (10/21) — 正式 App 登入頁依新藍圖只提供 Google 登入，已移除手機登入頁的信箱表單；原有 Firebase Email 工具、後端驗證及管理員後台信箱登入均未更動。以下審查與驗證是先前版本的紀錄，不代表目前手機畫面仍提供此入口。
+  > 手機 App 透過信箱與密碼登入的能力；若未來恢復，仍須驗證信箱所有權，首次登入只能取得顧客角色，商家身份另走申請審核。
+  - 《開發》手機登入頁信箱入口 [暫緩] — 先前已做過信箱表單及「忘記密碼」；2026-10-21 依新登入頁藍圖從 `RoleSelectScreen.jsx` 移除。`firebaseAuth.js` 的 `useFirebaseEmailLogin` 與後端 `POST /api/auth/firebase-session` 的 `email_verified` 檢查仍保留，沒有在本次更改。
   - 《審查》身份驗證安全複查 [完成] — 檢查是否可能用未驗證信箱建立帳號、是否可能取得比顧客更高權限、忘記密碼與登入錯誤訊息是否洩漏帳號是否存在；結果見 `docs/AI-security-review-log.md` 2026-09-12，沒有發現問題。
   - 《驗證》[完成] (9/12) — 使用者在 Firebase Console 開啟 Email/Password 登入方式後，用綁定好的測試帳號（顧客 `test-customer-yinji@drinkgroupbuy.test`、商家 `store1@example.com`）實際在真實 Expo web preview 登入成功，分別正確進入顧客首頁與「青山手作茶 中科店」商家後台。表單排版（桌面與手機 375px 寬度）、登入／建立帳號切換、錯誤訊息顯示皆已驗證。`npm test` 115/115 全過。本機端對端驗證完整，Azure 部署後的驗證仍待補。
   - 登入頁插圖換成系統分析書藍圖裡的線稿插畫 [完成] (9/16) — 原本 `LoginHeroIllustration` 是純用 RN View 疊色塊拼出來的抽象插畫（綠色色塊＋杯子＋「折省團買」浮動標籤），使用者指定要換成 `system-analysis/blueprints/4.1.1.2.1-customer-google-login-blueprint-s25-v2.png`（登入畫面藍圖）裡的飲料＋購物袋線稿圖示。用 PowerShell `System.Drawing` 從藍圖原圖裁出純圖示部分（去掉手機外框、狀態列、「DrinkGroupBuy」文字與 A/B/C/D 標註），存成 `mobile/assets/login-hero.png`，畫面端改成單純 `Image` 元件讀取這個靜態圖檔，移除舊插畫用不到的一整組 style（blob／cup／ticket 等）。**特別確認過不是新的原生依賴**——只是 Metro 既有的靜態圖片打包機制（跟這次稍早滑桿元件造成的原生模組閃退是不同類型的改動），可以透過 EAS Update 線上更新直接生效，不需要重新打包 APK。已用 Web 預覽截圖比對確認畫面正確顯示，`npm test` 138/138 全過，已推送並發布 EAS Update。

@@ -5,13 +5,14 @@ import { CheckRow } from "../components/CheckRow";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
+import { OrderAmountSummary } from "../components/OrderAmountSummary";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { QuantityStepper } from "../components/QuantityStepper";
 import { maxFontSizeMultiplier, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency, getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
 import { isDeadlineReached } from "../utils/deadlineTime";
 import { isDemoMode } from "../utils/demoMode";
-import { getGroupBuyActivityCapacityInfo } from "../utils/groupBuyActivityProgress";
+import { getGroupBuyActivityCapacityInfo, getOrderDiscountEstimate } from "../utils/groupBuyActivityProgress";
 import { formatOrderItemCustomizations } from "../utils/orderItems";
 import { goToCustomerHome } from "../navigation/goToCustomerHome";
 import { useThemedStyles } from "../theme/ThemeContext";
@@ -41,6 +42,7 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
   ));
   const totalQuantity = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalAmount = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
+  const discountEstimate = getOrderDiscountEstimate(groupBuyActivity, { originalAmount: totalAmount });
   const groupBuyActivityClosed = groupBuyActivity.canJoin === false || isDeadlineReached(groupBuyActivity);
   const existingOrder = appState.orders.find((order) => (
     order.customerId === selectedCustomerId
@@ -153,21 +155,24 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
       </Section>
 
       <Section title="訂單金額">
-        <Card compact tone="recess" style={styles.totalCard}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>原價合計</Text>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.totalAmount}>{formatCurrency(totalAmount)}</Text>
-          </View>
-          {canUpdatePendingOrder || blocksOrderUpdate ? (
-            <Text style={styles.totalNote}>
-              {canUpdatePendingOrder
-                ? "送出後會以目前購物車內容更新尚未授權的訂單。預授權成功後，購物車才會清空。"
-                : blockedByWithdrawalDecrease
-                  ? withdrawalLockedNoticeText
-                  : "此團購已有一筆已請款或已鎖定的訂單，請先回到訂單頁查看。"}
-            </Text>
-          ) : null}
-        </Card>
+        <OrderAmountSummary
+          filled
+          originalAmount={totalAmount}
+          discountAmount={discountEstimate?.discountAmount ?? 0}
+          totalAmount={discountEstimate?.finalAmount ?? totalAmount}
+          totalLabel="目前預估金額"
+          estimated
+        />
+        <Text style={styles.totalNote}>LINE Pay 先預授權原價 {formatCurrency(totalAmount)}；優惠折扣依團購截止時結果結算。</Text>
+        {canUpdatePendingOrder || blocksOrderUpdate ? (
+          <Text style={styles.totalNote}>
+            {canUpdatePendingOrder
+              ? "送出後會以目前購物車內容更新尚未授權的訂單。預授權成功後，購物車才會清空。"
+              : blockedByWithdrawalDecrease
+                ? withdrawalLockedNoticeText
+                : "此團購已有一筆已請款或已鎖定的訂單，請先回到訂單頁查看。"}
+          </Text>
+        ) : null}
         <CheckRow checked={acceptOriginalPrice} onToggle={() => setAcceptOriginalPrice((value) => !value)}>
           <View style={styles.checkboxTextGroup}>
             <Text style={styles.checkboxTitle}>若無優惠接受原價購買</Text>
@@ -182,8 +187,8 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
           : blocksOrderUpdate
             ? "前往既有訂單"
             : canUpdatePendingOrder
-              ? "更新訂單並前往 LINE Pay"
-              : "送出訂單並前往 LINE Pay"}
+              ? "更新訂單並前往付款流程"
+              : "前往付款流程"}
         onPress={async () => {
           if (isSubmitting) return;
           setSubmitError("");
@@ -209,24 +214,17 @@ export function CartScreen({ navigation, route, appState, actions, selectedCusto
               return;
             }
             const orderId = typeof submitResult === "string" ? submitResult : submitResult?.orderId;
-            if (orderId && isDemoMode()) {
-              // No real LINE Pay to authorize against -- this existing local-only action (built for
-              // early prototyping, before the real LINE Pay integration) marks the order paid
-              // directly, so demo mode can skip the payment screen and still show a completed order.
-              // A brand-new order was already authorized inside submitCart; this re-applies the same
-              // state (a no-op for it) and covers a revised or updated existing order.
-              actions.authorizeLinePayPayment(orderId);
-              // "customerOrders" lives in OrdersStack, a sibling tab's nested stack (CustomerTabs.jsx)
-              // -- not reachable with push(), which only targets the current stack (cart is in
-              // HomeStack). navigate()'s { screen, params } form is how React Navigation crosses into
-              // another tab's nested screen.
-              navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId } });
-              return;
-            }
             const orderRevisionId = typeof submitResult === "object" ? submitResult.orderRevisionId : null;
             const revisionAmount = typeof submitResult === "object" ? submitResult.revisionAmount : null;
             const revisionItems = typeof submitResult === "object" ? submitResult.revisionItems : null;
-            if (orderId) navigation.push("paymentAuthorization", { groupBuyActivityId: groupBuyActivity.id, orderId, orderRevisionId, revisionAmount, revisionItems });
+            if (orderId) navigation.push("paymentAuthorization", {
+              groupBuyActivityId: groupBuyActivity.id,
+              orderId,
+              orderRevisionId,
+              revisionAmount,
+              revisionItems,
+              demoCheckoutPreview: isDemoMode()
+            });
           } finally {
             setIsSubmitting(false);
           }
@@ -281,24 +279,6 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   removeText: {
     ...typeScale.button,
     color: tones.danger.fg
-  },
-  totalCard: {
-    gap: spacing.s8
-  },
-  totalRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.s12
-  },
-  totalLabel: {
-    ...typeScale.body,
-    flex: 1,
-    color: colors.textSecondary
-  },
-  totalAmount: {
-    ...typeScale.amount,
-    color: colors.text
   },
   totalNote: {
     ...typeScale.bodyDense,
