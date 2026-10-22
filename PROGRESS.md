@@ -173,7 +173,7 @@ updated: 2026-10-22
       > 一個可以快速執行的自動化檢查腳本，用來確認付款結算功能的核心流程沒有壞掉。
     - 正式告警通知管道 [完成] (8/24) — 新增 `backend/payments/alertNotifier.js`，LINE Pay 對帳排程與結算排程在既有的結構化警示日誌之外，同步呼叫可設定的 `ALERT_WEBHOOK_URL`（通用 webhook，Slack／Discord／Mattermost 的 incoming webhook 都吃同樣的 JSON 格式；不設定就完全不送、不報錯，sandbox/dev 環境本來就不會設）；排程本身丟例外（整個排程掛掉，不是單一工作失敗）也會觸發同一支通知。`/security-review` 抓到一個中風險問題並已修：結算排程失敗時原本會把整個團購活動所有訂單的明細（顧客 ID、金流交易序號、金額）原封不動送到外部 webhook，現在送出前會摘要化成筆數，不再外流逐筆明細。7 個單元測試（含這次修復的驗證）與既有測試共 77/77 全數通過，詳見 `docs/AI-security-review-log.md` 2026-08-24 追加的那筆
       > 上面提到的警示日誌，原本只會寫進系統紀錄裡，要有人自己去翻才看得到；現在補上一個可以接 Slack 之類工具的管道，出事會主動推播，不用等人發現。
-- 商家退款（方案 B：自報設計）[進行中]
+- 商家退款（方案 B：自報設計）[完成] (10/22)
   > 顧客要退款時，不再由系統出面執行退款，改成商家跟顧客自行約定怎麼退（例如商家自己操作 LINE Pay、現金或轉帳），商家只在 App 裡把這筆退款「記一筆」，讓系統的營收統計跟著扣掉這筆錢；商家在記錄後 24 小時內可以自己撤銷這筆記錄（例如填錯金額）。取代原本「商家按鈕→系統直接呼叫 LINE Pay 幫忙退款」的做法。完整規則見 `docs/payment-rules-and-flow.md`「退款」長期方向。
   - 舊方案 A 直接退款實作 [已封存] (10/21) — 原本「商家按鈕→後端呼叫 LINE Pay 退款 API」的做法，已於同一天確定長期方向改走方案 B 後整支改寫；舊程式碼封存在 git tag `archive/merchant-refund-scheme-a`（commit `27b171e`），需要時可用 `git show archive/merchant-refund-scheme-a:<檔案路徑>` 取回單一檔案的舊內容
   - 《設計》退款記錄資料表 [完成] (10/21) — 新表 `merchant_refund_marks`（`database/migrations/011_merchant_refund_marks_postgres.sql`，同步加進 `database/schema.sql` 與 `docs/AI-database-field-spec.md`）；經 `backend-architect` 角色 Skill 審查後補強：`status`／`revoked_at`／`revoked_by_user_id` 一致性與「撤銷時間不晚於建立時間 24 小時」各有 CHECK constraint，`idempotency_key` 唯一範圍改成「同一商家內」（不是全域，避免重蹈 `refund_requests` 曾經出現的跨商家冪等鍵碰撞問題），並補上 `(order_id) WHERE status='active'` 的 partial index。已在一次性暫時 Postgres schema（`scripts/with-temp-schema.js`）裡驗證：migration 套用成功、4 種違規寫入（revoked 缺欄位、撤銷超過 24 小時、同商家重複 key、）皆被正確擋下，不同商家可重用相同 key 文字也驗證通過；驗證用的腳本是暫時檔案，驗證完已刪除，不是永久測試
@@ -193,13 +193,13 @@ updated: 2026-10-22
     > 針對這次分支改動（不含已經單獨跑過 `/security-review` 的那部分）再跑一次程式碼品質與正確性審查。
   - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身，這次方案 B 改動不動這個頁面，繼續處理既有的待審申請
     > 平台營運人員審核退款申請、決定核准或駁回的網頁畫面，跟顧客/商家用的手機 App 是分開的。
-- 多店各自金流帳號（架構完成，帳號值待補）[進行中]
+- 多店各自金流帳號（架構完成，帳號值待補）[完成] (10/22)
   > 目前全部商店共用平台的一組 LINE Pay 帳號；這塊改成每間店各自有自己的收款帳號設定，系統依訂單所屬的店家查出對應帳號再去呼叫 LINE Pay。架構直接接進正式下單／付款流程，不是另外做一套展示用的假流程；這波只有一組帳號是真的能用的 LINE Pay sandbox（沿用現有設定），其餘店家先配明顯是假的占位帳號，之後申請到更多 sandbox 或正式帳號，只要換掉資料庫裡的值，不用改程式碼。
   - 《設計》店家金流帳號資料表 [完成] (10/22) — 新表 `store_payment_accounts`（`database/migrations/012_store_payment_accounts_postgres.sql`，同步加進 `database/schema.sql`），經 `backend-architect` 角色 Skill 審查：唯一鍵是 `(store_id, provider)` 不是只有 `store_id`，讓之後同一間店要加第二組帳號（例如真的 LINE Pay、信用卡）不用改 schema。已在一次性暫時 Postgres schema 驗證：migration 套用成功
     > 存放每間店的收款帳號設定：哪個金流服務、帳號代碼、密鑰、是否生效中。
   - 《開發》Backend：LINE Pay 呼叫改吃店家帳號 [完成] (10/22) — `linePayClient.js` 7 個對 LINE Pay 的函式都加上選填的帳號覆寫參數，不傳就跟以前一樣讀全域設定（零破壞性）；`linePayService.js` 新增 `resolveLinePayAccountOverrides`，在請款、確認、入帳、取消授權、退款、對帳排程、截止結算這些實際會呼叫 LINE Pay 的地方，先查訂單所屬店家、拿該店的帳號再呼叫。店家還沒分配專屬帳號時，落回全域環境變數（不是當錯誤擋下來）——這是刻意設計，確保還沒分配帳號的店家（含未來新申請的店家）付款不會中斷
     > 查訂單屬於哪家店、用該店的帳號設定去呼叫 LINE Pay 的核心邏輯；還沒配帳號的店家維持用現有共用設定，不會壞掉。
-  - 《開發》模擬帳號種子資料 [進行中] (10/22) — `scripts/seed-store-payment-accounts.js` 寫好並通過真實 Postgres smoke 驗證（預設只預覽、要加 `--apply` 才真的寫入，且對非本機資料庫會擋下來要求 `--allow-remote`）；**尚未對本機開發資料庫實際執行 `--apply`**，要執行時再確認
+  - 《開發》模擬帳號種子資料 [完成] (10/22) — `scripts/seed-store-payment-accounts.js` 寫好並通過真實 Postgres smoke 驗證（預設只預覽、要加 `--apply` 才真的寫入，且對非本機資料庫會擋下來要求 `--allow-remote`）；已對本機開發資料庫執行 `--apply`，7 間店（`store-001` 真帳號、`store-002`～`store-007` 占位假帳號）各寫入一筆 `store_payment_accounts`
     > 幫測試商店各自配一組帳號：參考店家（`store-001`，smoke test／展示在用的那家）沿用現有真的 LINE Pay sandbox 設定；其餘店家配明顯是假的占位帳號，之後申請到真帳號再替換
   - 《測試》自動化測試 [完成] (10/22) — 單元測試 `backend/payments/linePayService.test.js`（7 項，涵蓋帳號解析各種分支、以及 `/security-review` 抓到的退款帳號解析漏洞的迴歸測試），`npm test` 314/314 全過。真實 Postgres smoke `scripts/store-payment-account-postgres-smoke.js`（`npm run store-payment-account-postgres:smoke`）證明不同店家、不同訂單各自查到自己的帳號，不會串到別家店；既有付款相關 smoke test（`payment-authorization-request`／`confirm`／`cancel`、`group-buy-settlement-postgres`、`merchant-refund-mark-postgres`、`payment-refund-postgres`）全部重跑過，沒有壞掉
     > 確認不同店家的訂單真的各自用到對應的帳號，不會串到別家店。
