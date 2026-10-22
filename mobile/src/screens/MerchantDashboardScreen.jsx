@@ -1,28 +1,28 @@
 import { useRef, useState } from "react";
 import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { ActivitySyncNotice } from "../components/ActivitySyncNotice";
+import { OrderDetailIcon } from "../components/OrderDetailIcon";
+import { MerchantPickupLookup } from "../components/MerchantPickupLookup";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { DiscountSummaryCard } from "../components/DiscountSummaryCard";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { PearlTray } from "../components/PearlTray";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAppState } from "../state/AppStateContext";
-import { formatOrderItemCustomizations, toLocalOrderItem } from "../utils/orderItems";
+import { formatOrderItemCustomizations } from "../utils/orderItems";
 import { useOrderListSync } from "../hooks/useOrderListSync";
 import { formatCurrency, getStoreById, isWithdrawalLocked } from "../utils/calculations";
 import { formatDeadlineLabel } from "../utils/deadlineTime";
+import { radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { useTheme, useThemedStyles } from "../theme/ThemeContext";
 
 export function MerchantDashboardScreen({ navigation, route, appState, actions, selectedMerchantStoreId }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
   const { logout } = useAppState();
-  const [pickupCode, setPickupCode] = useState("");
-  const [pickupLookup, setPickupLookup] = useState(null);
-  const [pickupNotice, setPickupNotice] = useState(null);
-  const [pickupBusy, setPickupBusy] = useState(false);
   const [readyAction, setReadyAction] = useState(null);
   const [expandedOrderIds, setExpandedOrderIds] = useState({});
+  const [expandedActivityIds, setExpandedActivityIds] = useState({});
   // The history-order-detail view used to be a local-state toggle (selectedHistoryOrderId)
   // invisible to the hardware back button. It's now a real stack entry: this screen's own route
   // is pushed a second time with orderId (see MerchantDashboardStack.jsx).
@@ -50,59 +50,14 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
     && (order.lifecycleBucket ? order.lifecycleBucket === "active" : order.status !== "cancelled"));
   const historyOrders = appState.orders.filter((order) => {
     const groupBuyActivity = appState.groupBuyActivities.find((item) => item.id === order.groupBuyActivityId);
-    return merchantGroupBuyActivityIds.has(order.groupBuyActivityId) && (order.lifecycleBucket
-      ? order.lifecycleBucket === "history"
-      : ["completed", "cancelled"].includes(order.status)
-        || ["picked_up", "cancelled", "expired"].includes(order.pickupStatus)
-        || ["cancelled", "failed", "completed"].includes(groupBuyActivity?.status));
+    return merchantGroupBuyActivityIds.has(order.groupBuyActivityId) && (
+      ["cancelled", "failed", "completed"].includes(groupBuyActivity?.status)
+      || order.status === "cancelled"
+      || order.pickupStatus === "expired"
+    );
   });
   const pendingPaymentCount = activeOrders.filter((order) => ["pending", "failed"].includes(order.paymentStatus)).length;
   const paidOrderCount = activeOrders.filter((order) => ["authorized", "captured"].includes(order.paymentStatus)).length;
-
-  function handlePickupCodeChange(value) {
-    setPickupCode(value.replace(/[^0-9]/g, "").slice(0, 6));
-    setPickupLookup(null);
-    setPickupNotice(null);
-  }
-
-  async function handlePickupLookup() {
-    if (pickupCode.length !== 6) {
-      setPickupNotice({ type: "error", text: "請輸入六位取餐碼。" });
-      return;
-    }
-
-    setPickupBusy(true);
-    setPickupLookup(null);
-    setPickupNotice(null);
-    try {
-      const result = await actions.lookupPickupCredential(pickupCode);
-      setPickupLookup(result.credential);
-    } catch (error) {
-      setPickupNotice({ type: "error", text: getPickupErrorMessage(error) });
-    } finally {
-      setPickupBusy(false);
-    }
-  }
-
-  async function handlePickupRedeem() {
-    if (!pickupLookup || pickupLookup.status !== "active" || pickupBusy) return;
-
-    setPickupBusy(true);
-    setPickupNotice(null);
-    try {
-      const result = await actions.redeemPickupCredential(pickupCode);
-      setPickupLookup(null);
-      setPickupCode("");
-      setPickupNotice({
-        type: "success",
-        text: `${result.credential.customerDisplayName || "顧客"}的訂單已確認取餐。`
-      });
-    } catch (error) {
-      setPickupNotice({ type: "error", text: getPickupErrorMessage(error) });
-    } finally {
-      setPickupBusy(false);
-    }
-  }
 
   async function handleMarkReady(groupBuyActivityId, orderId) {
     setReadyAction({ activityId: groupBuyActivityId, orderId: orderId ?? null, busy: true, text: null, type: null });
@@ -128,6 +83,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
 
   function beginCancel(groupBuyActivityId) {
     setCancelFormActivityId(groupBuyActivityId);
+    setExpandedActivityIds((current) => ({ ...current, [groupBuyActivityId]: true }));
     setCancelReason("");
     setCancelAction(null);
   }
@@ -274,63 +230,15 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
       {tab === "active" ? (
         <>
           <Section title="取餐核銷">
-            <TextInput
-              accessibilityLabel="六位取餐碼"
-              autoCorrect={false}
-              keyboardType="number-pad"
-              maxLength={6}
-              onChangeText={handlePickupCodeChange}
-              onSubmitEditing={handlePickupLookup}
-              placeholder="六位取餐碼"
-              placeholderTextColor={colors.textSecondary}
-              returnKeyType="done"
-              style={styles.pickupInput}
-              value={pickupCode}
-            />
-            <PrimaryButton
-              disabled={pickupCode.length !== 6 || pickupBusy}
-              label={pickupBusy ? "查詢中" : "查詢訂單"}
-              onPress={handlePickupLookup}
-            />
-            {pickupNotice ? (
-              <Text style={pickupNotice.type === "error" ? styles.errorText : styles.successText}>
-                {pickupNotice.text}
-              </Text>
-            ) : null}
-            {pickupLookup ? (
-              <View style={styles.pickupLookupCard}>
-                <Text style={styles.lookupTitle}>{pickupLookup.customerDisplayName || "顧客訂單"}</Text>
-                <Text style={styles.lookupMeta}>{pickupLookup.activity.title}</Text>
-                <Text style={styles.lookupMeta}>
-                  {pickupLookup.totalCups} 杯 · {formatCurrency(pickupLookup.finalAmount)}
-                </Text>
-                {(pickupLookup.items ?? []).length > 0 ? (
-                  <View style={styles.pickupLookupItems}>
-                    {pickupLookup.items.map(toLocalOrderItem).map((item, index) => (
-                      <View key={item.id ?? index} style={styles.pickupLookupItemRow}>
-                        <Text style={styles.pickupLookupItemName}>{item.itemName} x{item.quantity}</Text>
-                        <Text style={styles.pickupLookupItemMeta}>
-                          {formatOrderItemCustomizations(item, { separator: "、" }) || "無客製化"}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-                <PrimaryButton
-                  disabled={pickupBusy || pickupLookup.status !== "active"}
-                  label={pickupBusy
-                    ? "處理中"
-                    : pickupLookup.status === "redeemed"
-                      ? "已取餐"
-                      : pickupLookup.status === "expired" ? "取餐碼已過期" : "確認已取餐"}
-                  onPress={handlePickupRedeem}
-                />
-              </View>
-            ) : null}
+            <MerchantPickupLookup actions={actions} />
           </Section>
           <Section title="活動清單">
         {activeGroupBuyActivities.length === 0 ? (
-          <Text style={styles.emptyText}>目前沒有進行中的團購。點右上「＋ 開團」建立測試活動。</Text>
+          <View style={styles.activityEmpty}>
+            <View style={styles.activityEmptyIcon}><OrderDetailIcon name="store" size={36} /></View>
+            <Text style={styles.activityEmptyTitle}>目前沒有進行中的團購</Text>
+            <Text style={styles.activityEmptyDescription}>建立團購活動，讓附近顧客一起享優惠。</Text>
+          </View>
         ) : null}
         {activeGroupBuyActivities.map((groupBuyActivity) => {
           const store = getStoreById(appState.stores ?? [], groupBuyActivity.storeId);
@@ -347,16 +255,22 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
             && order.pickupStatus === "not_ready"
           ));
           const manufacturableOrders = manufacturableOrderList.length;
+          const expanded = Boolean(expandedActivityIds[groupBuyActivity.id]);
 
           return (
             <View key={groupBuyActivity.id} style={styles.card}>
-              <View style={styles.header}>
-                <View style={styles.flex}>
-                  <Text style={styles.title}>{groupBuyActivity.title}</Text>
-                  <Text style={styles.meta}>{store?.name}</Text>
-                </View>
-                <StatusBadge value={groupBuyActivity.status} />
-              </View>
+              <MerchantActivitySummary
+                activity={groupBuyActivity}
+                storeName={store?.name}
+                orders={relatedOrders}
+                manufacturableOrders={manufacturableOrderList}
+                readyPickups={readyPickups}
+                canCancel={groupBuyActivity.status === "recruiting" && !isWithdrawalLocked(groupBuyActivity)}
+                onCancel={() => beginCancel(groupBuyActivity.id)}
+                onOpen={() => navigation.push("merchantProductionList", { groupBuyActivityId: groupBuyActivity.id })}
+                expanded={expanded}
+              />
+              {expanded ? <View style={styles.expandedActivity}>
               <PearlTray
                 currentCups={groupBuyActivity.currentCups}
                 targetCups={groupBuyActivity.targetCups}
@@ -380,7 +294,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
                       accessibilityRole="button"
                       onPress={() => navigation.push("merchantProductionList", { groupBuyActivityId: groupBuyActivity.id })}
                     >
-                      <Text style={styles.productionListLink}>總製作清單 ＞</Text>
+                      <Text style={styles.productionListLink}>活動訂單 ＞</Text>
                     </Pressable>
                   </View>
                   {manufacturableOrderList.map((order) => {
@@ -452,8 +366,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
                   {readyAction.text}
                 </Text>
               ) : null}
-              {groupBuyActivity.status === "recruiting" ? (
-                cancelFormActivityId === groupBuyActivity.id ? (
+              {groupBuyActivity.status === "recruiting" && cancelFormActivityId === groupBuyActivity.id ? (
                   <View style={styles.cancelForm}>
                     <Text style={styles.fieldLabel}>取消原因</Text>
                     <TextInput
@@ -481,20 +394,13 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
                       />
                     </View>
                   </View>
-                ) : (
-                  <PrimaryButton
-                    disabled={isWithdrawalLocked(groupBuyActivity)}
-                    label={isWithdrawalLocked(groupBuyActivity) ? "已進入截止前 30 分鐘，無法取消" : "取消團購"}
-                    onPress={() => beginCancel(groupBuyActivity.id)}
-                    variant="secondary"
-                  />
-                )
               ) : null}
               {cancelAction?.activityId === groupBuyActivity.id && cancelAction.text ? (
                 <Text style={cancelAction.type === "error" ? styles.errorText : styles.successText}>
                   {cancelAction.text}
                 </Text>
               ) : null}
+              </View> : null}
             </View>
           );
         })}
@@ -508,6 +414,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
           {historyOrders.map((order) => {
             const groupBuyActivity = appState.groupBuyActivities.find((item) => item.id === order.groupBuyActivityId);
             const total = order.captureAmount ?? order.finalAmount ?? order.subtotal ?? order.originalAmount ?? 0;
+            const cups = order.quantity ?? (order.items ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
 
             return (
               <Pressable
@@ -519,7 +426,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
                 <View style={styles.header}>
                   <View style={styles.flex}>
                     <Text style={styles.title}>{groupBuyActivity?.title ?? "團購活動"}</Text>
-                    <Text style={styles.meta}>顧客：{order.customerDisplayName || order.customerId || "顧客"} · {order.quantity ?? 0} 杯</Text>
+                    <Text style={styles.meta}>顧客：{order.customerDisplayName || order.customerId || "顧客"} · 共 {cups} 杯</Text>
                   </View>
                   <Text style={styles.historyAmount}>{formatCurrency(total)}</Text>
                 </View>
@@ -527,8 +434,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
                   <StatusBadge owner="merchantPayment" value={order.paymentStatus} />
                   <StatusBadge owner="pickup" value={order.pickupStatus} />
                 </View>
-                <Text style={styles.summary}>訂單狀態：{getOrderStatusLabel(order.status)}</Text>
-                <Text style={styles.openHint}>點擊查看明細 ＞</Text>
+                <Text style={styles.openHint}>查看訂單詳情 ›</Text>
               </Pressable>
             );
           })}
@@ -639,6 +545,73 @@ function getOrderStatusLabel(status) {
   return labels[status] ?? status;
 }
 
+export function MerchantActivitySummary({ activity, storeName, orders, manufacturableOrders, readyPickups, canCancel, onCancel, onOpen, expanded }) {
+  const styles = useThemedStyles(makeStyles);
+  const recruiting = activity.status === "recruiting";
+  const confirmed = activity.status === "confirmed";
+  const cups = Number(activity.settlement?.authorizedCups ?? activity.currentCups ?? 0);
+  const target = Number(activity.targetCups ?? activity.tiers?.[0]?.targetCups ?? 0);
+  const progress = target > 0 ? Math.max(0, Math.min(100, Math.round(cups / target * 100))) : 0;
+  const orderAmount = orders.reduce((sum, order) => sum + Number(order.captureAmount ?? order.finalAmount ?? order.originalAmount ?? order.subtotal ?? 0), 0);
+  const waitingCups = manufacturableOrders.reduce((sum, order) => sum + Number(order.quantity ?? 0), 0);
+  const actionLabel = "查看活動訂單";
+
+  return (
+    <View style={styles.activitySummary}>
+      <View style={styles.activityTopRow}>
+        <Text numberOfLines={1} style={styles.activityStoreName}>{storeName || "店家資料"}</Text>
+        {recruiting ? <View style={styles.activityRemaining}><OrderDetailIcon name="clock" size={18} /><Text numberOfLines={1} style={styles.activityMinor}>{activity.remainingTimeText || "招募中"}</Text></View>
+          : confirmed ? <Text style={styles.activityMinor}>已截止</Text> : null}
+      </View>
+      <View style={styles.activityNameRow}>
+        <Text numberOfLines={1} style={styles.activityName}>{activity.title}</Text>
+        <StatusBadge value={activity.status} />
+      </View>
+      {recruiting ? <>
+        <Text style={styles.activityCupCount}>{cups} / {target || "—"} 杯</Text>
+        <View style={styles.activityProgressTrack}><View style={[styles.activityProgressFill, { width: `${progress}%` }]} /></View>
+      </> : <View style={styles.activityStatRow}>
+        <Text style={styles.activityStatLabel}>最終團購杯數</Text>
+        <Text style={styles.activityStatValue}>{cups} 杯</Text>
+      </View>}
+      <View style={styles.activityMetricRow}>
+        <View style={styles.activityMetric}><OrderDetailIcon name="people" size={19} /><Text numberOfLines={1} style={styles.activityMetricText}><Text style={styles.activityMetricValue}>{activity.participantCount ?? 0}</Text> 人參與</Text></View>
+        <View style={[styles.activityMetric, styles.activityMetricRight]}><OrderDetailIcon name="receipt" size={19} /><Text numberOfLines={1} style={styles.activityMetricText}>訂單總金額 <Text style={styles.activityMetricValue}>{formatCurrency(orderAmount)}</Text></Text></View>
+      </View>
+      {(recruiting || confirmed) ? <View style={styles.activityTimeRow}>
+        <View style={styles.activityTimeCell}><OrderDetailIcon name="calendar" size={18} /><Text numberOfLines={1} style={styles.activityTimeText}>截止：{formatMerchantShortTime(activity.deadlineAt)}</Text></View>
+        <View style={styles.activityTimeCell}><OrderDetailIcon name="clock" size={18} /><Text numberOfLines={1} style={styles.activityTimeText}>取餐：{formatMerchantPickupTime(activity)}</Text></View>
+      </View> : <View style={styles.activityPickupRow}><OrderDetailIcon name="clock" size={18} /><Text numberOfLines={1} style={styles.activityTimeText}>取餐：{formatMerchantPickupTime(activity)}</Text></View>}
+      {!recruiting ? <View style={styles.activityProductionRow}><OrderDetailIcon name="receipt" size={18} /><Text numberOfLines={1} style={styles.activityProductionText}>待製作 {manufacturableOrders.length} 筆 · 共 {waitingCups} 杯{readyPickups > 0 ? ` · 可取餐 ${readyPickups} 筆` : ""}</Text></View> : null}
+      <View style={styles.activityFooter}>
+        {(recruiting || confirmed) ? <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canCancel }} disabled={!canCancel} onPress={onCancel} style={[styles.activityCancel, !canCancel && styles.activityCancelDisabled]}><Text style={[styles.activityCancelText, !canCancel && styles.activityCancelTextDisabled]}>取消團購</Text></Pressable> : <View />}
+        <Pressable accessibilityRole="button" onPress={onOpen} style={styles.activityOpen}><Text numberOfLines={1} style={styles.activityOpenText}>{actionLabel} ›</Text></Pressable>
+      </View>
+    </View>
+  );
+}
+
+function formatMerchantShortTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value ? String(value) : "時間待確認";
+  const two = (number) => String(number).padStart(2, "0");
+  return `${two(date.getMonth() + 1)}/${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+function formatMerchantPickupTime(activity) {
+  const start = activity.pickupStartAt;
+  const end = activity.pickupEndAt;
+  if (!start || !end) return activity.pickupTime || "時間待確認";
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) return activity.pickupTime || "時間待確認";
+  const two = (number) => String(number).padStart(2, "0");
+  const sameDay = startDate.getFullYear() === endDate.getFullYear()
+    && startDate.getMonth() === endDate.getMonth()
+    && startDate.getDate() === endDate.getDate();
+  return `${formatMerchantShortTime(start)}–${sameDay ? `${two(endDate.getHours())}:${two(endDate.getMinutes())}` : formatMerchantShortTime(end)}`;
+}
+
 const makeStyles = (colors, tones) => StyleSheet.create({
   hero: {
     gap: 14
@@ -661,12 +634,12 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   storeAvatarText: {
     color: colors.accentInk,
     fontSize: 20,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   storeName: {
     color: colors.text,
     fontSize: 19,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   storeSubtitle: {
     color: colors.textSecondary,
@@ -688,12 +661,12 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   metricValue: {
     color: colors.text,
     fontSize: 20,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   metricLabel: {
     color: colors.textSecondary,
     fontSize: 10,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   sectionHeader: {
     flexDirection: "row",
@@ -703,7 +676,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   sectionTitle: {
     color: colors.text,
     fontSize: 17,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   headerActions: {
     flexDirection: "row",
@@ -713,7 +686,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   createLink: {
     color: colors.accentInk,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   logoutButton: {
     minHeight: 32,
@@ -726,7 +699,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   logoutButtonText: {
     color: tones.danger.fg,
     fontSize: 13,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   tabRow: {
     flexDirection: "row",
@@ -744,7 +717,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   tabText: {
     color: colors.textSecondary,
     fontSize: 13,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "center"
   },
   tabDivider: {
@@ -767,7 +740,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     backgroundColor: colors.page,
     color: colors.text,
     fontSize: 22,
-    fontWeight: "900",
+    fontWeight: "700",
     letterSpacing: 0,
     paddingHorizontal: 12,
     textAlign: "center"
@@ -783,7 +756,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   lookupTitle: {
     color: colors.text,
     fontSize: 16,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   lookupMeta: {
     color: colors.textSecondary,
@@ -803,7 +776,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   pickupLookupItemName: {
     color: colors.text,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   pickupLookupItemMeta: {
     color: colors.textSecondary,
@@ -813,21 +786,57 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   errorText: {
     color: tones.danger.fg,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   successText: {
     color: tones.success.fg,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   card: {
-    gap: 10,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.lineRow,
+    gap: spacing.s12,
+    borderRadius: radii.md,
+    borderWidth: sizes.stroke,
+    borderColor: colors.lineDecor,
     backgroundColor: colors.page,
-    padding: 12
+    padding: spacing.s12
   },
+  activityEmpty: { minHeight: 185, borderWidth: sizes.stroke, borderColor: colors.lineDecor, borderRadius: radii.md, alignItems: "center", justifyContent: "center", gap: spacing.s8, padding: spacing.s20 },
+  activityEmptyIcon: { width: 66, height: 66, borderRadius: radii.pill, backgroundColor: colors.recess, alignItems: "center", justifyContent: "center" },
+  activityEmptyTitle: { ...typeScale.sectionTitle, color: colors.text, textAlign: "center" },
+  activityEmptyDescription: { ...typeScale.bodyDense, color: colors.textSecondary, textAlign: "center" },
+  activitySummary: { gap: spacing.s8 },
+  activityTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s8 },
+  activityStoreName: { ...typeScale.bodyDense, color: colors.textSecondary, flex: 1 },
+  activityRemaining: { flexDirection: "row", alignItems: "center", gap: spacing.s4, flexShrink: 0 },
+  activityMinor: { ...typeScale.bodyDense, color: colors.textSecondary },
+  activityNameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s8 },
+  activityName: { ...typeScale.sectionTitle, color: colors.text, flex: 1, minWidth: 0 },
+  activityCupCount: { ...typeScale.price, color: colors.text },
+  activityProgressTrack: { height: 10, backgroundColor: colors.progressTrack, borderRadius: radii.pill, overflow: "hidden" },
+  activityProgressFill: { height: 10, backgroundColor: colors.progress, borderRadius: radii.pill },
+  activityStatRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s12 },
+  activityStatLabel: { ...typeScale.bodyDense, color: colors.textSecondary },
+  activityStatValue: { ...typeScale.sectionTitle, color: colors.text },
+  activityMetricRow: { flexDirection: "row", alignItems: "center", borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s8 },
+  activityMetric: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.s4 },
+  activityMetricRight: { flex: 1.55, borderLeftWidth: 1, borderLeftColor: colors.lineRow, paddingLeft: spacing.s12 },
+  activityMetricText: { ...typeScale.bodyDense, color: colors.textSecondary, flexShrink: 1 },
+  activityMetricValue: { color: colors.text, fontWeight: "700" },
+  activityTimeRow: { gap: spacing.s8, borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s8 },
+  activityTimeCell: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.s8 },
+  activityTimeText: { ...typeScale.bodyDense, color: colors.textSecondary, flexShrink: 1 },
+  activityPickupRow: { flexDirection: "row", alignItems: "center", gap: spacing.s4, borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s8 },
+  activityProductionRow: { flexDirection: "row", alignItems: "center", gap: spacing.s4, borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s8 },
+  activityProductionText: { ...typeScale.bodyDense, color: colors.textSecondary, flexShrink: 1 },
+  activityFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s8, borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s4 },
+  activityCancel: { minHeight: sizes.tap, minWidth: 90, borderWidth: 1, borderColor: tones.danger.fg, borderRadius: radii.sm, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.s8 },
+  activityCancelDisabled: { borderColor: colors.lineInput, backgroundColor: colors.recess },
+  activityCancelText: { ...typeScale.bodyDense, color: tones.danger.fg, fontWeight: "700" },
+  activityCancelTextDisabled: { color: colors.textSecondary },
+  activityOpen: { minHeight: sizes.tap, justifyContent: "center", alignItems: "flex-end", flex: 1 },
+  activityOpenText: { ...typeScale.bodyDense, color: colors.accentInk, fontWeight: "700" },
+  expandedActivity: { gap: spacing.s12, borderTopWidth: 1, borderTopColor: colors.lineRow, paddingTop: spacing.s12 },
   pressed: {
     opacity: 0.8
   },
@@ -842,7 +851,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: 15,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   meta: {
     color: colors.textSecondary,
@@ -857,22 +866,22 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   summary: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   settledText: {
     color: tones.success.fg,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   warningText: {
     color: tones.warning.fg,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   readyText: {
     color: colors.accentInk,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   productionList: {
     gap: 6,
@@ -890,12 +899,12 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   productionListTitle: {
     color: colors.text,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   productionListLink: {
     color: colors.accentInk,
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   productionOrderRow: {
     borderWidth: 1,
@@ -927,7 +936,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   productionCustomer: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   productionItems: {
     color: colors.textSecondary,
@@ -954,21 +963,21 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     padding: 12
   },
   historyCard: {
-    gap: 10,
-    borderRadius: 16,
+    gap: 16,
+    borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: colors.lineRow,
-    backgroundColor: colors.recess,
-    padding: 12
+    borderColor: colors.lineDecor,
+    backgroundColor: colors.page,
+    padding: spacing.s16
   },
   historyAmount: {
-    color: colors.accentInk,
+    color: colors.text,
     fontSize: 18,
-    fontWeight: "900"
+    fontWeight: "700"
   },
   openHint: {
-    color: colors.textSecondary,
-    fontSize: 11,
+    color: colors.accentInk,
+    fontSize: 16,
     fontWeight: "700",
     textAlign: "right"
   },
@@ -987,7 +996,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     flexShrink: 1,
     color: colors.text,
     fontSize: 13,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "right"
   },
   monoValue: {
@@ -1007,7 +1016,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   fieldLabel: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   cancelReasonInput: {
     minHeight: 72,

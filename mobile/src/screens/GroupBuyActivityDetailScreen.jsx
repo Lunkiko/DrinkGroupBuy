@@ -1,12 +1,11 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ActivitySyncNotice } from "../components/ActivitySyncNotice";
 import { Card } from "../components/Card";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
-import { DiscountSummaryCard } from "../components/DiscountSummaryCard";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { PearlTray } from "../components/PearlTray";
 import { StatusBadge } from "../components/StatusBadge";
 import { radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
@@ -19,6 +18,7 @@ import { useThemedStyles } from "../theme/ThemeContext";
 
 export function GroupBuyActivityDetailScreen({ navigation, route, appState, actions, selectedCustomerId }) {
   const styles = useThemedStyles(makeStyles);
+  const [notesExpanded, setNotesExpanded] = useState(false);
   const groupBuyActivity = getGroupBuyActivityById(appState.groupBuyActivities, route.params?.groupBuyActivityId);
   const existingOrder = groupBuyActivity
     ? appState.orders.find((order) => (
@@ -55,6 +55,13 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
   // used the same way on the nearby-activities list) swaps in the next unreached tier, or the
   // highest tier once all are reached.
   const progress = getGroupBuyActivityProgress(groupBuyActivity);
+  const nextTier = groupBuyActivity.tiers.find((tier) => Number(tier.cups) === progress.nextTarget);
+  const nextDiscount = formatDealFactorLabel(nextTier?.discountPercent);
+  const progressLabel = progress.remainingCups > 0 && nextDiscount
+    ? `再 ${progress.remainingCups} 杯享 ${nextDiscount}`
+    : "已達最高優惠級距";
+  const remainingTimeLabel = String(groupBuyActivity.remainingTimeText ?? "").replace(/^剩\s*/, "");
+  const showNotes = notesExpanded || withdrawalLocked || Boolean(groupBuyActivity.cancellationReason);
 
   return (
     <MobileScreen
@@ -62,54 +69,71 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
       onBack={() => navigation.goBack()}
     >
       <ActivitySyncNotice status={activitySyncStatus} onRetry={retryActivitySync} />
-      <Section title="店家資訊">
-        <Card>
-          <View style={styles.rowBetween}>
-            <Text style={[styles.title, styles.flex]}>{store?.name ?? "店家資料未提供"}</Text>
-            <StatusBadge value={groupBuyActivity.status} />
+      <Card style={styles.storeCard}>
+        <View style={styles.storeGlyph} accessibilityLabel="店家圖示">
+          <View style={styles.shopRoof} />
+          <View style={styles.shopBody}><View style={styles.shopDoor} /></View>
+        </View>
+        <View style={styles.storeDetails}>
+          <View style={styles.storeHeading}>
+            <Text style={styles.storeName}>{store?.name ?? "店家資料未提供"}</Text>
+            {groupBuyActivity.status === "recruiting" ? (
+              <View style={styles.recruitingBadge}><View style={styles.recruitingDot} /><Text style={styles.recruitingText}>招募中</Text></View>
+            ) : <StatusBadge value={groupBuyActivity.status} />}
           </View>
-          <Text style={styles.meta}>{store?.address || "地址未提供"}</Text>
-          {store?.phone ? <Text style={styles.meta}>{store.phone}</Text> : null}
+          <View style={styles.storeInfoRow}><Text style={styles.infoIcon}>●</Text><Text style={styles.storeMeta}>{store?.address || "地址未提供"}</Text></View>
+          {store?.phone ? <View style={styles.storeInfoRow}><Text style={styles.infoIcon}>☎</Text><Text style={styles.storeMeta}>{store.phone}</Text></View> : null}
+        </View>
+      </Card>
+
+      <Section title={groupBuyActivity.title} titleStyle={styles.activityTitle}>
+        <Card style={styles.progressCard}>
+          <View style={styles.progressTop}>
+            <Text style={styles.cardHeading}>目前進度</Text>
+            <View style={styles.timeRow}><View style={styles.clock}><View style={styles.clockHand} /></View><Text style={styles.timeText}>剩 {remainingTimeLabel}</Text></View>
+          </View>
+          <View style={styles.countRow}><Text style={styles.countNumber}>{progress.currentCups} / {progress.nextTarget}</Text><Text style={styles.countUnit}>杯</Text></View>
+          <Text style={styles.participants}>{groupBuyActivity.participantCount} 人參與</Text>
+          <View style={styles.progressRow}>
+            <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progress.progressPercent}%` }]} /></View>
+            <Text style={styles.progressPercent}>{progress.progressPercent}%</Text>
+          </View>
+          <Text style={styles.nextTier}>{progressLabel}</Text>
+          <View style={styles.schedule}>
+            <View style={styles.scheduleItem}><Text style={styles.scheduleIcon}>▦</Text><Text style={styles.scheduleText}>截止：{groupBuyActivity.endTime}</Text></View>
+            <View style={styles.scheduleItem}><Text style={styles.scheduleIcon}>▢</Text><Text style={styles.scheduleText}>取餐：{groupBuyActivity.pickupTime}</Text></View>
+          </View>
         </Card>
       </Section>
 
-      <Section title="目前進度">
-        <Text style={styles.title}>{groupBuyActivity.title}</Text>
-        <PearlTray
-          currentCups={progress.currentCups}
-          targetCups={progress.nextTarget}
-          participantCount={groupBuyActivity.participantCount}
-          remainingTimeText={groupBuyActivity.remainingTimeText}
-        />
-        <DiscountSummaryCard groupBuyActivity={groupBuyActivity} />
-        <View style={styles.schedule}>
-          <Text style={styles.meta}>截止：{groupBuyActivity.endTime}</Text>
-          <Text style={styles.meta}>取貨：{groupBuyActivity.pickupTime}</Text>
-        </View>
+      <Section title="杯數優惠" titleStyle={styles.tierHeading}>
+        <Card style={styles.tiersCard}>
+          {groupBuyActivity.tiers.map((tier, index) => (
+            <View key={tier.cups} style={[styles.tierRow, index > 0 && styles.tierDivider]}>
+              <Text style={styles.tagIcon}>◇</Text>
+              <Text style={styles.tierText}>滿 {tier.cups} 杯</Text>
+              <Text style={styles.tierValue}>打 {formatDealFactorLabel(tier.discountPercent) || "—"}</Text>
+            </View>
+          ))}
+        </Card>
       </Section>
 
-      <Section title="杯數級距">
-        {groupBuyActivity.tiers.map((tier) => (
-          <View key={tier.cups} style={styles.tierRow}>
-            <Text style={styles.tierText}>滿 {tier.cups} 杯</Text>
-            <Text style={styles.tierValue}>打 {formatDealFactorLabel(tier.discountPercent) || "—"}</Text>
-          </View>
-        ))}
-      </Section>
-
-      <Section title="注意事項">
-        {withdrawalLocked ? <Notice tone="warning" message="目前距截止時間 30 分鐘內：仍可加入，既有訂單只能增加飲料，不能減少或退出。" /> : null}
-        {groupBuyActivity.cancellationReason ? <Notice tone="danger" message={`取消原因：${groupBuyActivity.cancellationReason}`} /> : null}
-        {groupBuyActivity.notices.length > 0 ? (
-          <View style={styles.notes}>
-            {groupBuyActivity.notices.map((notice) => <Text key={notice} style={styles.meta}>· {notice}</Text>)}
-          </View>
-        ) : null}
-      </Section>
+      <Card style={styles.notesCard}>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: showNotes }} onPress={() => setNotesExpanded((value) => !value)} style={styles.notesToggle}>
+          <Text style={styles.cardHeading}>注意事項</Text><Text style={styles.notesChevron}>{showNotes ? "⌃" : "⌄"}</Text>
+        </Pressable>
+        {showNotes ? <View style={styles.notes}>
+          {withdrawalLocked ? <Notice tone="warning" message="目前距截止時間 30 分鐘內：仍可加入，既有訂單只能增加飲料，不能減少或退出。" /> : null}
+          {groupBuyActivity.cancellationReason ? <Notice tone="danger" message={`取消原因：${groupBuyActivity.cancellationReason}`} /> : null}
+          {groupBuyActivity.notices.map((notice) => <Text key={notice} style={styles.noteText}>· {notice}</Text>)}
+          {!withdrawalLocked && !groupBuyActivity.cancellationReason && groupBuyActivity.notices.length === 0 ? <Text style={styles.noteText}>目前沒有其他注意事項。</Text> : null}
+        </View> : null}
+      </Card>
 
       <View style={styles.actions}>
         <PrimaryButton
           label={joinAction.label}
+          disabled={!joinAction.target}
           onPress={() => {
             if (joinAction.target === "customerOrders") {
               // Cross-tab: customerOrders is the Orders tab's own root, not a screen in this stack.
@@ -130,48 +154,52 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.s12
-  },
-  flex: {
-    flex: 1
-  },
-  title: {
-    ...typeScale.sectionTitle,
-    color: colors.text
-  },
-  meta: {
-    ...typeScale.body,
-    color: colors.textSecondary
-  },
-  schedule: {
-    gap: spacing.s4
-  },
-  tierRow: {
-    minHeight: sizes.tap,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: radii.sm,
-    backgroundColor: colors.recess,
-    paddingHorizontal: spacing.s16
-  },
-  tierText: {
-    ...typeScale.body,
-    color: colors.text
-  },
-  tierValue: {
-    ...typeScale.body,
-    fontWeight: typeScale.label.fontWeight,
-    color: colors.accentInk
-  },
-  notes: {
-    gap: spacing.s8
-  },
-  // MobileScreen leaves 24 between its direct children; the two buttons belong together.
-  actions: {
-    gap: spacing.s12
-  }
+  storeCard: { flexDirection: "row", alignItems: "center", gap: spacing.s16, padding: spacing.s12, borderRadius: radii.md },
+  storeGlyph: { width: 68, height: 68, borderRadius: radii.sm, backgroundColor: colors.recess, alignItems: "center", justifyContent: "center" },
+  shopRoof: { width: 34, height: 13, borderWidth: sizes.stroke, borderColor: colors.accent, borderTopLeftRadius: 8, borderTopRightRadius: 8, transform: [{ skewX: "-12deg" }] },
+  shopBody: { width: 30, height: 24, borderWidth: sizes.stroke, borderColor: colors.accent, borderTopWidth: 0, borderBottomLeftRadius: 5, borderBottomRightRadius: 5, alignItems: "center", justifyContent: "flex-end" },
+  shopDoor: { width: 9, height: 14, borderWidth: sizes.stroke, borderBottomWidth: 0, borderColor: colors.accent, borderTopLeftRadius: 5, borderTopRightRadius: 5 },
+  storeDetails: { flex: 1, gap: spacing.s4 },
+  storeHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s4, flexWrap: "wrap" },
+  storeName: { ...typeScale.price, color: colors.text, flexShrink: 1 },
+  recruitingBadge: { flexDirection: "row", alignItems: "center", gap: spacing.s4, paddingHorizontal: spacing.s8, paddingVertical: spacing.s4, borderRadius: radii.pill, backgroundColor: colors.progressTrack },
+  recruitingDot: { width: 8, height: 8, borderRadius: radii.pill, backgroundColor: colors.warmInk },
+  recruitingText: { ...typeScale.label, color: colors.warmInk },
+  storeInfoRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.s8 },
+  infoIcon: { ...typeScale.body, color: colors.textSecondary, width: 14, textAlign: "center" },
+  storeMeta: { ...typeScale.bodyDense, color: colors.textSecondary, flex: 1 },
+  activityTitle: { ...typeScale.price },
+  progressCard: { gap: spacing.s8, borderRadius: radii.md, padding: spacing.s12 },
+  progressTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.s8 },
+  cardHeading: { ...typeScale.sectionTitle, color: colors.text },
+  timeRow: { flexDirection: "row", alignItems: "center", gap: spacing.s8 },
+  clock: { width: 19, height: 19, borderWidth: sizes.stroke, borderColor: colors.warmInk, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
+  clockHand: { width: 5, height: 6, borderLeftWidth: 1, borderBottomWidth: 1, borderColor: colors.warmInk },
+  timeText: { ...typeScale.bodyDense, color: colors.textSecondary },
+  countRow: { flexDirection: "row", alignItems: "baseline", gap: spacing.s8 },
+  countNumber: { ...typeScale.pearlNumber, color: colors.text },
+  countUnit: { ...typeScale.body, color: colors.textSecondary },
+  participants: { ...typeScale.body, color: colors.textSecondary },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: spacing.s8 },
+  progressTrack: { flex: 1, height: 14, borderRadius: radii.pill, overflow: "hidden", backgroundColor: colors.progressTrack },
+  progressFill: { height: "100%", borderRadius: radii.pill, backgroundColor: colors.progress },
+  progressPercent: { ...typeScale.bodyDense, color: colors.textSecondary },
+  nextTier: { ...typeScale.body, color: colors.text },
+  schedule: { borderTopWidth: 1, borderColor: colors.lineRow, paddingTop: spacing.s8, gap: spacing.s4 },
+  scheduleItem: { flexDirection: "row", gap: spacing.s8, alignItems: "center" },
+  scheduleIcon: { ...typeScale.price, width: 22, color: colors.textSecondary },
+  scheduleText: { ...typeScale.bodyDense, color: colors.text, flex: 1 },
+  tierHeading: { ...typeScale.price, borderLeftWidth: 4, borderColor: colors.warmInk, paddingLeft: spacing.s12 },
+  tiersCard: { gap: 0, paddingVertical: 0, paddingHorizontal: spacing.s12, borderRadius: radii.md },
+  tierRow: { minHeight: sizes.tap, flexDirection: "row", alignItems: "center", gap: spacing.s12 },
+  tierDivider: { borderTopWidth: 1, borderColor: colors.lineRow },
+  tagIcon: { ...typeScale.price, color: colors.accentInk },
+  tierText: { ...typeScale.body, color: colors.text, flex: 1 },
+  tierValue: { ...typeScale.price, color: colors.accentInk },
+  notesCard: { padding: spacing.s12, borderRadius: radii.md },
+  notesToggle: { minHeight: sizes.tap, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  notesChevron: { ...typeScale.screenTitle, color: colors.textSecondary },
+  notes: { gap: spacing.s8 },
+  noteText: { ...typeScale.bodyDense, color: colors.textSecondary },
+  actions: { gap: spacing.s8 }
 });

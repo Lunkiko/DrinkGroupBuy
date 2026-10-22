@@ -6,14 +6,15 @@ import { ChoiceChip } from "../components/ChoiceChip";
 import { EmptyPanel } from "../components/EmptyPanel";
 import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
+import { OrderDetailIcon } from "../components/OrderDetailIcon";
+import { getOrderStage, OrderJourneyCard, OrderProgressCard, OrderStoreCard } from "../components/OrderDetailVisuals";
 import { PickupPass } from "../components/PickupPass";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { StatusBadge } from "../components/StatusBadge";
 import { useOrderListSync } from "../hooks/useOrderListSync";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency, isWithdrawalLocked } from "../utils/calculations";
 import { getBusinessNow } from "../utils/businessTime";
-import { getGroupBuyActivityProgress } from "../utils/groupBuyActivityProgress";
+import { getGroupBuyActivityProgress, getOrderDiscountEstimate } from "../utils/groupBuyActivityProgress";
 import { getGroupBuyActivityStore } from "../utils/groupBuyActivityStores";
 import { getManualRepaymentStateInfo } from "../utils/manualRepayment";
 import { formatOrderItemCustomizations, normalizeOrderItem } from "../utils/orderItems";
@@ -90,6 +91,7 @@ export function CustomerOrdersScreen({ navigation, route, appState, actions, sel
         title="訂單明細"
         onBack={() => navigation.goBack()}
         backLabel="返回"
+        headerRight={<Text numberOfLines={1} style={styles.orderNumber}>訂單編號 {selectedOrder.id}</Text>}
       >
         <OrderDetailCard
           order={selectedOrder}
@@ -218,7 +220,7 @@ function OrderListCard({ order, groupBuyActivities, payments, historical, onPres
   );
 }
 
-function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigation, historical }) {
+export function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigation, historical }) {
   const styles = useThemedStyles(makeStyles);
   const [cancelNotice, setCancelNotice] = useState(null);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -228,9 +230,6 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
     ?? getGroupBuyActivityStore(groupBuyActivity);
   const orderItems = (order.items ?? []).map(normalizeOrderItem);
   const displaySubtotal = getOrderSubtotal(order);
-  const displayTotal = payment?.captureAmount ?? displaySubtotal;
-  const authorizedTotal = payment?.authorizedAmount ?? displaySubtotal;
-  const pickupReady = ["ready", "picked_up"].includes(order.pickupStatus);
   const pickupCode = order.pickupCredential?.status === "active"
     ? order.pickupCredential.pickupCode
     : null;
@@ -247,40 +246,29 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
     : !orderLocked && !historical;
   const canDeleteItem = order.paymentStatus === "pending" ? canEdit : (canEdit && !withdrawalLocked);
   const progress = groupBuyActivity ? getGroupBuyActivityProgress(groupBuyActivity) : null;
-  const progressText = progress ? `${progress.currentCups} / ${progress.nextTarget} 杯` : "團購資料已不存在";
   const manualRepayment = order.manualRepayment ?? null;
   const showManualRepayment = order.paymentStatus === "failed" && !historical;
   const repaymentState = showManualRepayment ? getManualRepaymentStateInfo(manualRepayment) : null;
+  const stage = getOrderStage(order);
+  const discountEstimate = groupBuyActivity ? getOrderDiscountEstimate(groupBuyActivity, { originalAmount: displaySubtotal }) : null;
+  const paidAmount = payment?.captureAmount ?? order.finalAmount ?? null;
+  const discountAmount = paidAmount == null ? discountEstimate?.discountAmount ?? 0 : Math.max(0, displaySubtotal - paidAmount);
 
   return (
     <View style={styles.orderCard}>
-      <Card style={styles.summaryCard}>
-        <View style={styles.statusBar}>
-          <View style={styles.statusGroup}>
-            <StatusBadge owner="payment" value={order.paymentStatus} />
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.statusText}>團購進度：{progressText}</Text>
-          </View>
-          {historical ? <Text style={styles.historyReason}>{getHistoryReason(order, groupBuyActivity)}</Text> : null}
-        </View>
+      <OrderJourneyCard order={order} historical={historical} activity={groupBuyActivity} historyReason={getHistoryReason(order, groupBuyActivity)} />
+      <OrderStoreCard store={store} onDetailPress={() => navigation.push("groupBuyActivityDetail", { groupBuyActivityId: order.groupBuyActivityId })} />
+      {!historical && stage <= 1 ? <OrderProgressCard activity={groupBuyActivity} progress={progress} stage={stage} /> : null}
+      {!historical && stage === 2 ? (
+        <Card style={styles.pickupCard}>
+          <View style={styles.pickupTimeRow}><OrderDetailIcon name="calendar" size={28} /><Text style={styles.pickupTime}>取餐時間  {groupBuyActivity?.pickupTime ?? "時間待確認"}</Text></View>
+          {pickupCode ? <PickupPass pickupCode={pickupCode} cupCount={order.quantity} showCups={false} /> : <Notice title="正在取得取餐碼" message="請稍候，或重新進入訂單更新取餐資訊。" tone="info" />}
+          <Text style={styles.pickupHint}>請於取餐時間內到店出示取餐碼。</Text>
+        </Card>
+      ) : null}
 
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryText}>
-            <Text style={styles.storeName}>{store?.name ?? "店家資料"}</Text>
-            {groupBuyActivity?.pickupTime ? (
-              <Text style={styles.meta}>取餐時間：{groupBuyActivity.pickupTime}</Text>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => navigation.push("groupBuyActivityDetail", { groupBuyActivityId: order.groupBuyActivityId })}
-              style={({ pressed }) => [styles.smallDetailButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.smallDetailText}>團購詳情</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Card>
-
-      <Section title="訂單明細">
+      <Card style={styles.detailSection}>
+        <Text style={styles.detailHeading}>訂單明細</Text>
         {showManualRepayment ? (
           <Notice accessibilityRole="alert" title="扣款失敗" message={repaymentState.statusText} tone="danger">
             <PrimaryButton
@@ -320,19 +308,16 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
             >
               <View style={styles.detailTop}>
                 <View style={[styles.flex, (!canEdit || historical) && styles.detailTextDimmed]}>
-                  <Text style={styles.itemTitle}>{item.name} ({item.size}) x {item.quantity}</Text>
+                  <Text style={styles.itemTitle}>{item.name} × {item.quantity}</Text>
                   <View style={styles.chips}>
-                    <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chip}>{item.sweetness}</Text>
-                    <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chip}>{item.ice}</Text>
-                    {item.toppings.map((topping) => (
-                      <Text key={`${item.id}-${topping}`} maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chip}>{topping}</Text>
-                    ))}
+                    <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.chip}>{formatOrderItemCustomizations(item)}</Text>
                   </View>
-                  <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.itemPrice}>{formatCurrency(item.subtotal)}</Text>
                 </View>
+                <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.itemPrice}>{formatCurrency(item.subtotal)}</Text>
+              </View>
+              {canDeleteItem && !historical ? (
                 <Pressable
                   accessibilityRole="button"
-                  disabled={!canDeleteItem || historical}
                   onPress={(event) => {
                     event.stopPropagation?.();
                     const nextItems = orderItems.filter((current) => current.id !== item.id);
@@ -342,12 +327,12 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
                 >
                   <Text
                     maxFontSizeMultiplier={maxFontSizeMultiplier}
-                    style={[styles.deleteText, (!canDeleteItem || historical) && styles.deleteTextDisabled]}
+                    style={styles.deleteText}
                   >
-                    {historical ? "歷史" : !canDeleteItem ? "鎖定" : "刪除"}
+                    刪除
                   </Text>
                 </Pressable>
-              </View>
+              ) : null}
             </Pressable>
           ))}
           {orderItems.length === 0 ? <EmptyPanel>目前沒有飲品明細。</EmptyPanel> : null}
@@ -367,23 +352,9 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
           <Notice accessibilityRole="alert" message={order.revisionError} tone="danger" />
         ) : null}
 
-        <PrimaryButton
-          label={historical ? "歷史訂單不可修改" : !canEdit ? "訂單目前不可修改" : "修改訂單"}
-          variant="secondary"
-          disabled={!canEdit || historical}
-          onPress={() => canEdit && !historical && navigation.push("drinkSelection", {
-            groupBuyActivityId: order.groupBuyActivityId,
-            editOrderId: order.id
-          })}
-        />
-
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>訂單金額</Text>
-          <View style={styles.priceGroup}>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.price}>{formatCurrency(displayTotal)}</Text>
-            <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.originalPrice}>{formatCurrency(authorizedTotal)}</Text>
-          </View>
-        </View>
+        <View style={styles.amountLine}><Text style={styles.totalLabel}>共 {order.quantity} 杯</Text><Text style={styles.amountText}>小計 {formatCurrency(displaySubtotal)}</Text></View>
+        <View style={styles.amountLine}><Text style={styles.amountLabel}>{paidAmount == null ? "目前預估折扣" : "折扣金額"}</Text><Text style={styles.amountText}>{formatCurrency(discountAmount)}</Text></View>
+        <View style={styles.amountLine}><Text style={styles.amountLabel}>{paidAmount == null ? "目前預估金額" : "已付款金額"}</Text><Text style={styles.amountEmphasis}>{formatCurrency(paidAmount ?? discountEstimate?.finalAmount ?? displaySubtotal)}</Text></View>
 
         {order.reauthorizationReason === "order_amount_changed"
           && !historical
@@ -399,56 +370,48 @@ function OrderDetailCard({ order, groupBuyActivities, payments, actions, navigat
             />
           </Notice>
         ) : null}
-      </Section>
+      </Card>
 
-      {!historical && order.availableActions?.includes("cancel") ? (
-        <View style={styles.emptyActions}>
-          <PrimaryButton
-            label={cancelBusy ? "取消中…" : "退出團購並取消訂單"}
-            variant="secondary"
-            disabled={cancelBusy}
-            onPress={async () => {
-              setCancelBusy(true);
-              setCancelNotice(null);
-              try {
-                await actions.cancelOrder(order.id);
-                setCancelNotice({ message: "訂單已取消，付款授權已依狀態處理。", tone: "success" });
-              } catch (error) {
-                setCancelNotice({ message: error.message || "取消訂單失敗。", tone: "danger" });
-              } finally {
-                setCancelBusy(false);
-              }
-            }}
-          />
+      {historical || stage === 3 ? (
+        <PrimaryButton label={historical ? "返回歷史訂單" : "返回首頁"} onPress={() => historical ? navigation.goBack() : navigation.navigate("HomeTab")} />
+      ) : (
+        <View style={styles.orderActions}>
+          {order.paymentStatus === "pending" || order.paymentStatus === "failed" ? (
+            <Notice message={pickupPendingContent.text} title={pickupPendingContent.title} tone={pickupPendingContent.tone}>
+              {order.paymentStatus === "pending" ? <PrimaryButton label="前往付款" onPress={() => navigation.push("paymentAuthorization", { groupBuyActivityId: order.groupBuyActivityId, orderId: order.id })} /> : null}
+            </Notice>
+          ) : null}
+          <Text style={styles.actionHint}>{canEdit ? `團購截止前 ${groupBuyActivity?.withdrawalLockMinutes ?? 30} 分鐘以前可修改訂單或退出團購。` : "團購已截止，訂單無法修改或退出。"}</Text>
+          <View style={styles.actionRow}>
+            <PrimaryButton
+              label="修改訂單"
+              variant="secondary"
+              style={styles.actionButton}
+              disabled={!canEdit || historical}
+              onPress={() => navigation.push("drinkSelection", { groupBuyActivityId: order.groupBuyActivityId, editOrderId: order.id })}
+            />
+            <PrimaryButton
+              label={cancelBusy ? "退出中…" : "退出團購"}
+              variant="secondary"
+              style={styles.actionButton}
+              disabled={cancelBusy || !order.availableActions?.includes("cancel")}
+              onPress={async () => {
+                setCancelBusy(true);
+                setCancelNotice(null);
+                try {
+                  await actions.cancelOrder(order.id);
+                  setCancelNotice({ message: "訂單已取消，付款授權已依狀態處理。", tone: "success" });
+                } catch (error) {
+                  setCancelNotice({ message: error.message || "取消訂單失敗。", tone: "danger" });
+                } finally {
+                  setCancelBusy(false);
+                }
+              }}
+            />
+          </View>
           {cancelNotice ? <Notice message={cancelNotice.message} tone={cancelNotice.tone} /> : null}
         </View>
-      ) : null}
-
-      {pickupReady && !historical ? (
-        pickupCode ? (
-          <PickupPass pickupCode={pickupCode} cupCount={order.quantity} />
-        ) : (
-          <Notice
-            message={order.pickupStatus === "picked_up"
-              ? "店家已完成核銷。"
-              : "請稍候，或重新進入訂單更新取餐資訊。"}
-            title={order.pickupStatus === "picked_up" ? "已取餐" : "正在取得取餐碼"}
-            tone={order.pickupStatus === "picked_up" ? "neutral" : "info"}
-          />
-        )
-      ) : !historical ? (
-        <Notice message={pickupPendingContent.text} title={pickupPendingContent.title} tone={pickupPendingContent.tone}>
-          {order.paymentStatus === "pending" ? (
-            <PrimaryButton
-              label="前往付款"
-              onPress={() => navigation.push("paymentAuthorization", {
-                groupBuyActivityId: order.groupBuyActivityId,
-                orderId: order.id
-              })}
-            />
-          ) : null}
-        </Notice>
-      ) : null}
+      )}
     </View>
   );
 }
@@ -570,6 +533,21 @@ function getHistoryReason(order, groupBuyActivity) {
 }
 
 const makeStyles = (colors, tones) => StyleSheet.create({
+  orderNumber: { ...typeScale.caption, color: colors.textSecondary, maxWidth: 185, textAlign: "right" },
+  detailSection: { gap: spacing.s12 },
+  detailHeading: { ...typeScale.sectionTitle, color: colors.text },
+  pickupCard: { gap: spacing.s16 },
+  pickupTimeRow: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
+  pickupTime: { ...typeScale.body, color: colors.accentInk },
+  pickupHint: { ...typeScale.bodyDense, color: colors.textSecondary, textAlign: "center" },
+  amountLine: { minHeight: sizes.tap, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s12, borderTopWidth: 1, borderTopColor: colors.lineRow },
+  amountLabel: { ...typeScale.body, color: colors.textSecondary },
+  amountText: { ...typeScale.body, color: colors.text },
+  amountEmphasis: { ...typeScale.price, color: colors.text },
+  orderActions: { gap: spacing.s12 },
+  actionHint: { ...typeScale.bodyDense, color: colors.textSecondary, textAlign: "center" },
+  actionRow: { flexDirection: "row", gap: spacing.s12 },
+  actionButton: { flex: 1 },
   loadingText: {
     ...typeScale.caption,
     color: colors.textSecondary
@@ -727,7 +705,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     maxHeight: 320
   },
   itemList: {
-    gap: spacing.s8
+    gap: 0
   },
   price: {
     ...typeScale.price,
@@ -739,10 +717,9 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     textDecorationLine: "line-through"
   },
   detailCard: {
-    padding: spacing.s16,
-    borderRadius: radii.md,
-    borderWidth: sizes.stroke,
-    borderColor: colors.lineDecor,
+    paddingVertical: spacing.s12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lineRow,
     backgroundColor: colors.page
   },
   // Dims only the row's text column (colors.text stays above 4.5:1 at this opacity). The delete / locked
@@ -765,8 +742,7 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   deleteButton: {
     minWidth: sizes.tap,
     minHeight: sizes.tap,
-    marginRight: -spacing.s12,
-    paddingHorizontal: spacing.s12,
+    alignSelf: "flex-end",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -782,23 +758,18 @@ const makeStyles = (colors, tones) => StyleSheet.create({
     color: colors.text
   },
   itemPrice: {
-    ...typeScale.price,
+    ...typeScale.body,
     color: colors.text,
-    marginTop: spacing.s8
+    textAlign: "right"
   },
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.s8,
-    marginTop: spacing.s8
+    marginTop: spacing.s4
   },
   chip: {
-    ...typeScale.caption,
-    color: colors.text,
-    borderRadius: radii.xs,
-    backgroundColor: colors.recess,
-    paddingHorizontal: spacing.s8,
-    paddingVertical: spacing.s4
+    ...typeScale.bodyDense,
+    color: colors.textSecondary
   },
   totalRow: {
     minHeight: sizes.tap,

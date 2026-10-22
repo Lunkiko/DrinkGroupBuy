@@ -1670,3 +1670,54 @@
 | 驗證 | 單元測試 6 項；真後端 smoke 新增標頭檢查，涵蓋 JSON、HTML、302 轉址、404、OPTIONS 五種響應 × Azure 型／純 HTTP 型兩種環境，並確認 CORS 標頭與 `Content-Type` 仍在；**反向驗證**：暫時拿掉入口那一行，smoke 如預期在第一個響應失敗，還原後通過 |
 | 真瀏覽器驗證 | 用內建瀏覽器對暫時 schema 上的真後端實際操作：共用密碼登入（表單送出加 302）、後台首頁／帳號角色／退款審核／商家申請／數據統計／匯入菜單六個頁面載入且表單數量正確、登出（表單送出加轉址）；控制台沒有任何 CSP 違規或被擋下的訊息；從頁面內嵌入 iframe 確實被擋下；瀏覽器端看到的標頭與設計一致 |
 | 沒驗證到 | 部署到 Azure 後的實際回應標頭（含 HSTS）；LINE Pay 結果頁在真實付款流程中的行為（頁面沒有框架嵌入也沒有外部表單，預期不受影響，但沒有走完整付款流程）；Firebase 後台登入頁（需要真實 Firebase 設定，暫時環境沒有） |
+
+---
+
+## 2026-10-21 — 手機登入頁依藍圖改為 Google 單一入口
+
+**範圍**：`mobile/src/screens/RoleSelectScreen.jsx` 的登入入口與畫面、`mobile/src/theme/tokens.js` 的字級與圖示底色、`mobile/assets/google-g.png`
+**觸發原因**：`AGENTS.md` 規定 auth 程式碼改動後要複查並記錄；使用者確認正式版只顯示 Google 登入。
+**方法**：檢查本次 diff，對照 `useFirebaseGoogleLogin`、`loginWithFirebaseIdToken`、`getRouteForUser` 與 `isDemoMode` 的呼叫路徑；檢查新素材與修改檔案是否包含機密。
+
+### 發現
+
+沒有發現本次改動新增的注入、越權、金額竄改、機密或資料外洩問題。
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| Google 登入與授權 | 按鈕仍呼叫既有 `signInWithGoogle`，取得 Firebase ID token 後仍送 `/api/auth/firebase-session`，依後端回傳角色導向；未改動 token 驗證、角色判斷或權限邏輯。 |
+| 信箱入口 | 只從手機正式登入畫面移除表單與呼叫；`firebaseAuth.js` 的 Email 工具、後端驗證及管理員後台信箱登入均未更動。 |
+| 離線展示 | `isDemoMode()` 仍需明確設定 `EXPO_PUBLIC_DEMO_MODE=true`；店家示範入口只在該分支出現。 |
+| 外部輸入與金額 | 本次沒有新增外部輸入、網路請求、SQL 或金額處理。 |
+| 機密與資料 | 新增的 Google G 為公開品牌圖示；diff 無金鑰、token、使用者資料或 `.env`。 |
+
+### 驗證與限制
+
+`node --test "mobile/tests/*.test.mjs"`：80/80 通過；本機離線展示模式在 375px 網頁預覽中點擊顧客與店家入口皆成功。未用真實 Google 帳號在 Android 實機驗證本次登入畫面；正式登入仍需在 PR 審核時實機檢查。
+
+---
+
+## 2026-10-22 — 離線展示付款流程補上確認頁
+
+**範圍**：`mobile/src/screens/CartScreen.jsx`、`mobile/src/screens/PaymentAuthorizationScreen.jsx` 的離線展示分支。
+**觸發原因**：`AGENTS.md` 規定付款程式碼改動後要複查並記錄；網頁預覽原本略過確認付款頁。
+**方法**：檢查本次 diff，沿購物車送出、確認頁、LINE Pay 模擬步驟與訂單明細的呼叫路徑操作，確認正式付款呼叫的條件與參數。
+
+### 發現
+
+沒有發現本次改動新增的注入、越權、金額竄改、機密或資料外洩問題。展示模式的訂單仍沿用既有 `submitCart` 自動授權行為，因此模擬確認頁是視覺流程，不能作為真實付款完成時序的驗證。
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| 正式付款隔離 | 模擬分支必須同時符合 `EXPO_PUBLIC_DEMO_MODE=true` 與購物車傳入的 `demoCheckoutPreview`；正式版仍走既有 `startPaymentAuthorization`、規則載入與後端同步。 |
+| 金額與授權 | 模擬畫面只讀取既有訂單金額；沒有把前端金額送給付款提供者，也沒有更動後端授權、請款或驗證邏輯。 |
+| 規則與資料 | 模擬規則明確標示「展示資料」，不呼叫真實規則 API；正式付款仍以後端規則版本建立同意資料。 |
+| 機密與輸入 | 新增的畫面與截圖未包含金鑰、token 或真實付款資料；模擬步驟不呼叫 LINE Pay。 |
+
+### 驗證與限制
+
+`node --test "mobile/tests/*.test.mjs"`：80/80 通過；375px 離線預覽實際點過「購物車 → 確認付款 → LINE Pay（展示模式）→ 訂單明細」。正式 LINE Pay 授權、Android 返回深層連結及真實付款時序未在離線展示中驗證，需由擁有者在整合環境審核。
