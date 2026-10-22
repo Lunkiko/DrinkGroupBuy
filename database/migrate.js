@@ -26,19 +26,45 @@ const { createPostgresConnectionOptions } = require("../backend/database/postgre
 
 const migrationsDir = path.join(__dirname, "migrations");
 
+// Arbitrary, stable key for the advisory lock below -- only meaningful as "the one key every
+// caller in this codebase agrees to lock on before touching schema_migrations", not tied to
+// anything else. Picking a different number would just mean a different (still-consistent) lock.
+const MIGRATION_ADVISORY_LOCK_KEY = 729001;
+
+// Opened only for the brief connect -> migrate -> close window, not held alongside the app's own
+// connection pool. A short connect timeout plus statement_timeout/lock_timeout mean a slow or
+// lock-blocked Postgres fails loudly within seconds instead of hanging this call (and whatever
+// awaits it, e.g. the server's own startup) indefinitely.
+const MIGRATION_CONNECT_TIMEOUT_MS = 10_000;
+const MIGRATION_STATEMENT_TIMEOUT_MS = 30_000;
+const MIGRATION_LOCK_TIMEOUT_MS = 15_000;
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required");
   }
-  const client = new Client(createPostgresConnectionOptions());
+  const result = await connectAndRunMigrations();
+  if (result.appliedCount === 0) {
+    console.log(`Already up to date (${result.totalCount} migration(s) applied, nothing pending).`);
+  } else {
+    console.log(`Applied ${result.appliedCount} migration(s). Now at version ${result.latestVersion}.`);
+  }
+}
+
+// Shared connect/run/close lifecycle -- used by main() (the CLI entry point) and by
+// backend/server.js's startup hook, so there is exactly one place that owns "how to open a
+// connection for migrations and make sure it's closed again", not two independently maintained
+// copies of the same try/finally.
+async function connectAndRunMigrations() {
+  const client = new Client({
+    ...createPostgresConnectionOptions(),
+    connectionTimeoutMillis: MIGRATION_CONNECT_TIMEOUT_MS,
+    statement_timeout: MIGRATION_STATEMENT_TIMEOUT_MS,
+    lock_timeout: MIGRATION_LOCK_TIMEOUT_MS,
+  });
   await client.connect();
   try {
-    const result = await runMigrations(client);
-    if (result.appliedCount === 0) {
-      console.log(`Already up to date (${result.totalCount} migration(s) applied, nothing pending).`);
-    } else {
-      console.log(`Applied ${result.appliedCount} migration(s). Now at version ${result.latestVersion}.`);
-    }
+    return await runMigrations(client);
   } finally {
     await client.end();
   }
@@ -47,21 +73,33 @@ async function main() {
 // Shared by main() and the smoke test (scripts/postgres-migration-runner-smoke.js) so
 // both exercise the exact same apply logic against a live `pg` client, rather than the
 // test reimplementing it separately and risking drift.
+//
+// Takes an advisory lock (released in `finally`, however this returns or throws) before checking
+// or applying anything: without it, two callers racing against the same database (e.g. two
+// process boots overlapping during a restart) could both see the same migration as "pending" and
+// race to apply it, with the loser hitting a DDL/unique-constraint conflict instead of a clean
+// "someone else is already migrating" wait. `lock_timeout` on the connection (set above) bounds
+// how long the loser waits before failing with a clear error, rather than hanging forever.
 async function runMigrations(client) {
-  const files = listMigrationFiles();
-  await ensureMigrationsTable(client);
-  const applied = await getAppliedVersions(client);
-  const pending = files.filter((file) => !applied.has(file.version));
+  await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
+  try {
+    const files = listMigrationFiles();
+    await ensureMigrationsTable(client);
+    const applied = await getAppliedVersions(client);
+    const pending = files.filter((file) => !applied.has(file.version));
 
-  for (const file of pending) {
-    await applyMigration(client, file);
+    for (const file of pending) {
+      await applyMigration(client, file);
+    }
+
+    return {
+      totalCount: files.length,
+      appliedCount: pending.length,
+      latestVersion: files.length > 0 ? files[files.length - 1].version : null,
+    };
+  } finally {
+    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
   }
-
-  return {
-    totalCount: files.length,
-    appliedCount: pending.length,
-    latestVersion: files.length > 0 ? files[files.length - 1].version : null,
-  };
 }
 
 function listMigrationFiles() {
@@ -133,7 +171,13 @@ async function applyMigration(client, file) {
   }
 }
 
-module.exports = { listMigrationFiles, runMigrations, ensureMigrationsTable, getAppliedVersions };
+module.exports = {
+  listMigrationFiles,
+  runMigrations,
+  ensureMigrationsTable,
+  getAppliedVersions,
+  connectAndRunMigrations,
+};
 
 if (require.main === module) {
   main().catch((error) => {

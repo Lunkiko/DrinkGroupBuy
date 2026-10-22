@@ -50,6 +50,41 @@ async function main() {
     assert.equal(secondRun.appliedCount, 0, "second run should find nothing pending");
     assert.equal(secondRun.totalCount, expectedFiles.length);
 
+    // 3. Two connections racing runMigrations() against a schema that still has pending
+    // migrations -- proves the advisory lock (2026-10-22, code-review finding) actually
+    // serializes them instead of letting both see the same migration as "pending" and race
+    // to apply it. Reset to an empty schema first so there's real work to race over.
+    await client.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await client.query(`CREATE SCHEMA "${schemaName}"`);
+    await client.query(`SET search_path TO "${schemaName}"`);
+    const raceClientA = new Client({ connectionString: process.env.DATABASE_URL });
+    const raceClientB = new Client({ connectionString: process.env.DATABASE_URL });
+    await raceClientA.connect();
+    await raceClientB.connect();
+    try {
+      await raceClientA.query(`SET search_path TO "${schemaName}"`);
+      await raceClientB.query(`SET search_path TO "${schemaName}"`);
+      const [raceResultA, raceResultB] = await Promise.all([
+        runMigrations(raceClientA),
+        runMigrations(raceClientB),
+      ]);
+      // Whichever acquired the lock first applied everything; the other found nothing left
+      // pending once it got its turn -- never both applying (a race), never either erroring.
+      const appliedCounts = [raceResultA.appliedCount, raceResultB.appliedCount].sort((a, b) => a - b);
+      assert.deepEqual(
+        appliedCounts, [0, expectedFiles.length],
+        "exactly one of the two racing runs should apply every migration, the other nothing"
+      );
+      const raceAppliedVersions = await getAppliedVersions(client);
+      assert.equal(
+        raceAppliedVersions.size, expectedFiles.length,
+        "schema_migrations should end up with exactly one row per migration, not duplicates from the race"
+      );
+    } finally {
+      await raceClientA.end();
+      await raceClientB.end();
+    }
+
     console.log(
       `PostgreSQL migration runner proof passed: ${expectedFiles.length} migration(s) applied `
       + `to a fresh schema, idempotent re-run confirmed, residue-free schema dropped below.`

@@ -2,9 +2,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { promises: fs } = require("node:fs");
-const { Client: PgClient } = require("pg");
-const { runMigrations } = require("../database/migrate");
-const { createPostgresConnectionOptions } = require("./database/postgresConnection");
+const { connectAndRunMigrations } = require("../database/migrate");
 const {
   cancelGroupBuyActivity,
   cancelCustomerOrderInDatabase,
@@ -2899,20 +2897,35 @@ async function applyPendingMigrationsIfPostgres() {
   // *_RUNTIME flag decides per-repository, not one shared DATABASE_RUNTIME value, so checking
   // DATABASE_URL's presence is the one signal that's actually reliable here.
   if (!process.env.DATABASE_URL) return;
+  // Escape hatch for a human who wants to review/back up before a sensitive deploy applies new
+  // schema changes unattended (AGENTS.md: "資料庫 mutation 前先備份，完成後檢查 integrity 與
+  // foreign keys") -- set this, deploy, do that by hand, then unset it and restart.
+  if (readBooleanEnv(process.env.DISABLE_STARTUP_MIGRATIONS, false)) {
+    console.warn("[migrate] DISABLE_STARTUP_MIGRATIONS is set -- skipping the startup migration check.");
+    return;
+  }
 
-  const client = new PgClient(createPostgresConnectionOptions());
-  await client.connect();
-  try {
-    const result = await runMigrations(client);
-    if (result.appliedCount > 0) {
-      console.log(`[migrate] Applied ${result.appliedCount} migration(s) on startup. Now at version ${result.latestVersion}.`);
-    }
-  } finally {
-    await client.end();
+  const result = await connectAndRunMigrations();
+  if (result.appliedCount > 0) {
+    console.log(`[migrate] Applied ${result.appliedCount} migration(s) on startup. Now at version ${result.latestVersion}.`);
   }
 }
 
-loadDevConsoleState().then(() => applyPendingMigrationsIfPostgres()).then(() => {
+async function startServer() {
+  try {
+    await loadDevConsoleState();
+  } catch (error) {
+    console.error("Failed to load dev console state:", error.message);
+    process.exit(1);
+  }
+
+  try {
+    await applyPendingMigrationsIfPostgres();
+  } catch (error) {
+    console.error("Failed to apply startup database migrations:", error.message);
+    process.exit(1);
+  }
+
 server.listen(port, () => {
   console.log(`DrinkGroupBuy backend listening on http://localhost:${port}`);
   const devModeBlockedReason = devAuthModeBlockedReason();
@@ -2965,10 +2978,9 @@ server.listen(port, () => {
     console.log(`Pickup expiration scheduler disabled: ${pickupExpirationScheduler.reason}`);
   }
 });
-}).catch((error) => {
-  console.error("Failed to start up (dev console state load or database migration):", error.message);
-  process.exit(1);
-});
+}
+
+startServer();
 
 function sendPickupServiceResult(response, result) {
   if (!result?.error) {
