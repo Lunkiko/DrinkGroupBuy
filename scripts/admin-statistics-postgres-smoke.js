@@ -1,11 +1,16 @@
 "use strict";
 
-// Proves, against real PostgreSQL, that the admin weekly-trend, peak-hours and customer-retention
-// queries bucket by real Asia/Taipei wall-clock time and filter correctly. These aggregate the
-// WHOLE orders/customers set (there is no per-store id to scope a fixture to, unlike the
-// merchant/customer statistics repositories), so this can't assert exact totals against a shared
-// dev database -- instead it reads each function before and after inserting known fixture rows,
-// and asserts the DELTA in the specific week/hour/customer buckets those rows land in.
+// Proves, against real PostgreSQL, that the admin weekly-trend, peak-hours, customer-retention and
+// basic-statistics queries bucket/net correctly. These aggregate the WHOLE orders/customers set
+// (there is no per-store id to scope a fixture to, unlike the merchant/customer statistics
+// repositories), so this can't assert exact totals against a shared dev database -- instead it
+// reads each function before and after inserting known fixture rows, and asserts the DELTA.
+//
+// The basic-statistics revenue delta below only exercises the merchant_refund_marks join (not
+// payment_refunds): that second join is the identical shape merchantStatisticsRepository.js's own
+// smoke test already proves against real payment_refunds rows (which need a full payment_captures/
+// payment_authorizations chain to fixture), so re-proving the same join shape here would duplicate
+// coverage without testing anything new -- see docs/AI-security-review-log.md 2026-10-22.
 
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
@@ -110,6 +115,15 @@ async function main() {
     await createFixture(database);
     const after = await readRelevantBuckets(repository);
 
+    // Every captured order this fixture creates adds to the platform-wide revenue delta: orders[0]
+    // ("captured", final_amount 70) plus the 5 retentionOrders (final_amount 50 each, all 'captured')
+    // = 320 gross. orders[0] also gets a $20 active merchant_refund_mark, so the net delta must be
+    // 320 - 20 = 300, not the gross 320.
+    assert.equal(
+      after.totalRevenue - before.totalRevenue, 300,
+      "total revenue must net out the active merchant_refund_marks row against the captured order",
+    );
+
     // The week bucket also picks up the 3 retention fixture orders submitted "this week" (see
     // retentionOrders below) -- each captured, original=final=50 (no discount): +3 orders, +150
     // revenue, +0 discount on top of the peak-hours fixture's own captured order.
@@ -163,8 +177,9 @@ async function main() {
 }
 
 async function readRelevantBuckets(repository) {
-  const [weeklyTrend, peakHours, retention] = await Promise.all([
+  const [weeklyTrend, peakHours, retention, basicStatistics] = await Promise.all([
     repository.getWeeklyTrend(), repository.getPeakHours(), repository.getCustomerRetention(),
+    repository.getBasicStatistics(),
   ]);
   const week = weeklyTrend.find((row) => row.weekStart === targetWeekStart) ?? { orderCount: 0, revenue: 0, discountAmount: 0 };
   const retentionWeek = retention.weeklyReturning.find((row) => row.weekStart === targetWeekStart)
@@ -178,6 +193,7 @@ async function readRelevantBuckets(repository) {
       repeatCustomers: retention.repeatCustomers,
       week: retentionWeek,
     },
+    totalRevenue: basicStatistics.orders.totalRevenue,
   };
 }
 
@@ -275,6 +291,14 @@ async function createFixture(database) {
         fixture.original, fixture.final, fixture.payment, fixture.pickup, fixture.submittedAt]);
     }
 
+    // Marks $20 of the "captured" order (final_amount 70) as refunded, proving getBasicStatistics
+    // nets this against revenue instead of counting the order's gross amount.
+    await transaction.query(`
+      INSERT INTO merchant_refund_marks (
+        id, order_id, store_id, marked_by_user_id, amount, reason, status, idempotency_key, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, 20, 'admin stats proof refund', 'active', $5, $6, $6)
+    `, [`refund-mark-admin-stats-proof-${proofId}`, orders[0].orderId, storeId, creatorId, `admin-stats-proof-${proofId}`, iso(0)]);
+
     for (const customer of retentionCustomers) {
       await transaction.query(
         "INSERT INTO users (id, display_name, status, created_at, updated_at) VALUES ($1, $2, 'active', $3, $3)",
@@ -308,7 +332,9 @@ async function cleanup(database) {
   const orderIds = [...orders, ...retentionOrders].map((fixture) => fixture.orderId);
   const activityIds = [...orders, ...retentionOrders].map((fixture) => fixture.activityId);
   const customerIds = retentionCustomers.map((customer) => customer.userId);
+  const refundMarkId = `refund-mark-admin-stats-proof-${proofId}`;
   await database.transaction(async (transaction) => {
+    await transaction.query("DELETE FROM merchant_refund_marks WHERE id = $1", [refundMarkId]);
     await transaction.query("DELETE FROM orders WHERE id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM group_buy_activities WHERE id = ANY($1::text[])", [activityIds]);
     await transaction.query("DELETE FROM stores WHERE id = $1", [storeId]);
@@ -317,13 +343,14 @@ async function cleanup(database) {
   });
   const residue = await database.query(`
     SELECT
+      (SELECT COUNT(*)::integer FROM merchant_refund_marks WHERE id = $6) AS refund_mark_count,
       (SELECT COUNT(*)::integer FROM orders WHERE id = ANY($1::text[])) AS order_count,
       (SELECT COUNT(*)::integer FROM group_buy_activities WHERE id = ANY($2::text[])) AS activity_count,
       (SELECT COUNT(*)::integer FROM stores WHERE id = $3) AS store_count,
       (SELECT COUNT(*)::integer FROM merchants WHERE id = $4) AS merchant_count,
       (SELECT COUNT(*)::integer FROM users WHERE id = ANY($5::text[])) AS customer_count
-  `, [orderIds, activityIds, storeId, merchantId, customerIds]);
-  assert.deepEqual(residue.rows[0], { order_count: 0, activity_count: 0, store_count: 0, merchant_count: 0, customer_count: 0 });
+  `, [orderIds, activityIds, storeId, merchantId, customerIds, refundMarkId]);
+  assert.deepEqual(residue.rows[0], { refund_mark_count: 0, order_count: 0, activity_count: 0, store_count: 0, merchant_count: 0, customer_count: 0 });
 }
 
 main().catch((error) => {

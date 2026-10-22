@@ -38,25 +38,62 @@ async function getBasicStatisticsPostgres(database) {
         COUNT(*) AS total_count
       FROM group_buy_activities
     `, [SUCCESSFUL_ACTIVITY_STATUSES, UNSUCCESSFUL_ACTIVITY_STATUSES]),
+    // total_revenue is netted against both refund sources that never flip payment_status back off
+    // 'captured' -- merchant_refund_marks (scheme B, self-reported) and the still-live admin-approval
+    // payment_refunds path -- the same two sources and the same "sum separately, add together" shape
+    // merchantStatisticsRepository.js's getStoreStatisticsPostgres already uses for the per-store
+    // figure. average_order_value is deliberately left un-netted: it describes the size distribution
+    // of captured orders, not realized revenue, so a later refund on one of them doesn't change it.
     database.query(`
       SELECT
         COUNT(*) AS total_orders,
         COUNT(*) FILTER (WHERE payment_status = 'captured') AS captured_orders,
         COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_orders,
-        COALESCE(SUM(final_amount) FILTER (WHERE payment_status = 'captured'), 0) AS total_revenue,
-        COALESCE(AVG(final_amount) FILTER (WHERE payment_status = 'captured'), 0) AS average_order_value
+        COALESCE(SUM(orders.final_amount) FILTER (WHERE orders.payment_status = 'captured'), 0)
+          - COALESCE(SUM(mark_refund.refunded_amount) FILTER (WHERE orders.payment_status = 'captured'), 0)
+          - COALESCE(SUM(provider_refund.refunded_amount) FILTER (WHERE orders.payment_status = 'captured'), 0)
+          AS total_revenue,
+        COALESCE(AVG(orders.final_amount) FILTER (WHERE orders.payment_status = 'captured'), 0) AS average_order_value
       FROM orders
+      LEFT JOIN (
+        SELECT order_id, SUM(amount) AS refunded_amount
+        FROM merchant_refund_marks
+        WHERE status = 'active'
+        GROUP BY order_id
+      ) mark_refund ON mark_refund.order_id = orders.id
+      LEFT JOIN (
+        SELECT order_id, SUM(refund_amount) AS refunded_amount
+        FROM payment_refunds
+        WHERE status = 'refunded'
+        GROUP BY order_id
+      ) provider_refund ON provider_refund.order_id = orders.id
     `),
+    // Same refund netting as above, per store.
     database.query(`
       SELECT
         store_record.id,
         store_record.name,
         COUNT(DISTINCT activity.id) AS activity_count,
         COUNT(order_record.id) FILTER (WHERE order_record.payment_status = 'captured') AS captured_order_count,
-        COALESCE(SUM(order_record.final_amount) FILTER (WHERE order_record.payment_status = 'captured'), 0) AS revenue
+        COALESCE(SUM(order_record.final_amount) FILTER (WHERE order_record.payment_status = 'captured'), 0)
+          - COALESCE(SUM(mark_refund.refunded_amount) FILTER (WHERE order_record.payment_status = 'captured'), 0)
+          - COALESCE(SUM(provider_refund.refunded_amount) FILTER (WHERE order_record.payment_status = 'captured'), 0)
+          AS revenue
       FROM stores store_record
       JOIN group_buy_activities activity ON activity.store_id = store_record.id
       LEFT JOIN orders order_record ON order_record.activity_id = activity.id
+      LEFT JOIN (
+        SELECT order_id, SUM(amount) AS refunded_amount
+        FROM merchant_refund_marks
+        WHERE status = 'active'
+        GROUP BY order_id
+      ) mark_refund ON mark_refund.order_id = order_record.id
+      LEFT JOIN (
+        SELECT order_id, SUM(refund_amount) AS refunded_amount
+        FROM payment_refunds
+        WHERE status = 'refunded'
+        GROUP BY order_id
+      ) provider_refund ON provider_refund.order_id = order_record.id
       GROUP BY store_record.id, store_record.name
       ORDER BY revenue DESC, activity_count DESC
       LIMIT $1

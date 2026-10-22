@@ -1816,3 +1816,26 @@
 ### 驗證
 
 `npm test` 314/314（含這次新增、驗證該修復的 7 項單元測試）；`store-payment-account-postgres:smoke`、`payment-refund-postgres:smoke`、`payment-authorization-request:smoke`、`payment-authorization-confirm:smoke`、`payment-authorization-cancel:smoke`、`group-buy-settlement-postgres:smoke`、`merchant-refund-mark-postgres:smoke` 全過。
+
+---
+
+## 2026-10-22 -- adminStatisticsRepository.js 退款統計缺口，金流改動
+
+**範圍**：`backend/database/repositories/adminStatisticsRepository.js`、對應單元測試、`scripts/admin-statistics-postgres-smoke.js`。
+**呼應**：上一筆（多店各自 LINE Pay 收款帳號）記錄裡「已知未修的缺口」那段，以及 PROGRESS.md 商家退款（方案B）那筆記錄的同一段文字——`merchant_refund_marks` 自報退款不會改 `payment_status`，`adminStatisticsRepository.js` 的平台總營收／各店營收完全沒有netting邏輯，管理員看到的數字會比實際偏高。這次確認是否解決：**已解決**。
+**觸發原因**：`AGENTS.md` 規定金流改動完成後要複查並記錄；這次把 `getBasicStatisticsPostgres` 的 `total_revenue`／`topStores[].revenue` 改成扣掉 `merchant_refund_marks`（狀態 active）與 `payment_refunds`（狀態 refunded）兩個退款來源，手法完全比照 `merchantStatisticsRepository.js` 既有的 `getStoreStatisticsPostgres`（兩個來源分開 LEFT JOIN、SUM 後相加扣除）。
+
+**方法**：獨立審查者（subagent）讀完整改動與 `backend/server.js` 裡 `/admin/statistics` 路由的授權檢查，針對新查詢的 SQL injection、授權是否有退化、新 JOIN 有沒有外洩退款原因等欄位、以及測試/smoke script 改動本身的風險逐一檢查；我自己覆核。
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| SQL injection | 兩個新 LEFT JOIN 子查詢（`merchant_refund_marks`、`payment_refunds`）只用靜態表名／欄位名，動態值仍沿用既有的 `$1` 參數化（`TOP_STORES_LIMIT`、狀態陣列），沒有字串拼接。 |
+| 授權 | `backend/server.js` 的 `/admin/statistics` 路由呼叫 `getBasicStatistics()` 前仍經過 `requireAdminWebUser`，跟其他 `/admin/*` 路由一致，這次改動沒有動路由或授權邏輯，沒有退化。 |
+| 資料外洩 | 新 JOIN 只把退款金額 SUM 進 `total_revenue`／`revenue` 這兩個數字欄位，沒有把退款原因、標記 ID、或任何退款紀錄本身的欄位帶進回應；這是管理員本來就能看的平台總覽，netting 本身不是新的資料外洩面。 |
+| 測試／smoke script 改動 | 純粹是驗證用的假資料／SQL 文字斷言，不是新的執行路徑；smoke script 的 fixture 用 `randomUUID` 隔離、結束後清乾淨，不影響既有資料。 |
+
+### 驗證
+
+單元測試 9/9（新增 2 項，驗證兩條查詢的退款 netting SQL 形狀與既有的「直接映射」行為），`npm test` 316/316 全過。真實 Postgres smoke `admin-statistics-postgres:smoke` 新增一段：對一筆已請款訂單標記 $20 自報退款，確認平台總營收的變動量確實扣掉這 $20（而不是算進毛額），驗證通過。

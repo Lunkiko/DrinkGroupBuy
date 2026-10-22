@@ -6,7 +6,12 @@ const { createAdminStatisticsRepository } = require("./adminStatisticsRepository
 
 // retentionWeekly's query also contains "date_trunc('week'" (same as weeklyTrend's), so it must be
 // checked first via its own unique "first_week" CTE name.
-function createFakeDatabase({ weeklyTrend = [], peakHours = [], retentionOverall = [], retentionWeekly = [] } = {}) {
+function createFakeDatabase({
+  weeklyTrend = [], peakHours = [], retentionOverall = [], retentionWeekly = [],
+  basicActivities = [{ successful_count: "0", unsuccessful_count: "0", total_count: "0" }],
+  basicOrders = [{ total_orders: "0", captured_orders: "0", cancelled_orders: "0", total_revenue: "0", average_order_value: "0" }],
+  basicTopStores = [],
+} = {}) {
   const queries = [];
   return {
     queries,
@@ -18,6 +23,9 @@ function createFakeDatabase({ weeklyTrend = [], peakHours = [], retentionOverall
         if (statement.includes("repeat_customers")) return { rows: retentionOverall };
         if (statement.includes("first_week")) return { rows: retentionWeekly };
         if (statement.includes("date_trunc('week'")) return { rows: weeklyTrend };
+        if (statement.includes("successful_count")) return { rows: basicActivities };
+        if (statement.includes("store_record.id")) return { rows: basicTopStores };
+        if (statement.includes("total_orders")) return { rows: basicOrders };
         throw new Error(`Unexpected SQL: ${statement}`);
       },
     },
@@ -49,6 +57,36 @@ test("weekly trend query buckets in Asia/Taipei time and looks back a bounded wi
   assert.match(query.statement, /payment_status = 'captured'/);
   assert.match(query.statement, /submitted_at >= now\(\) - make_interval\(weeks => \$1::int\)/);
   assert.deepEqual(query.parameters, [8]);
+});
+
+test("basic statistics' total revenue and per-store revenue net out both refund sources, same shape as merchantStatisticsRepository.js", async () => {
+  const fake = createFakeDatabase();
+  await createAdminStatisticsRepository({ database: fake.database }).getBasicStatistics();
+
+  const orderQuery = fake.queries.find((query) => query.statement.includes("total_orders"));
+  const topStoresQuery = fake.queries.find((query) => query.statement.includes("store_record.id"));
+
+  for (const query of [orderQuery, topStoresQuery]) {
+    assert.match(query.statement, /LEFT JOIN \( SELECT order_id, SUM\(amount\) AS refunded_amount FROM merchant_refund_marks WHERE status = 'active' GROUP BY order_id \) mark_refund/);
+    assert.match(query.statement, /LEFT JOIN \( SELECT order_id, SUM\(refund_amount\) AS refunded_amount FROM payment_refunds WHERE status = 'refunded' GROUP BY order_id \) provider_refund/);
+  }
+  assert.match(orderQuery.statement, /- COALESCE\(SUM\(mark_refund\.refunded_amount\).*- COALESCE\(SUM\(provider_refund\.refunded_amount\).*AS total_revenue/s);
+  assert.match(topStoresQuery.statement, /- COALESCE\(SUM\(mark_refund\.refunded_amount\).*- COALESCE\(SUM\(provider_refund\.refunded_amount\).*AS revenue/s);
+  assert.match(topStoresQuery.statement, /ORDER BY revenue DESC/);
+  // average_order_value is deliberately NOT netted against refunds (order size, not realized revenue).
+  const averageExpression = orderQuery.statement.match(/COALESCE\(AVG\(.*?\) AS average_order_value/s)[0];
+  assert.ok(!averageExpression.includes("refund"));
+});
+
+test("basic statistics maps the already-netted total_revenue straight through", async () => {
+  const fake = createFakeDatabase({
+    basicOrders: [{ total_orders: "10", captured_orders: "8", cancelled_orders: "1", total_revenue: "350", average_order_value: "50" }],
+    basicTopStores: [{ id: "store-001", name: "青山手作茶", activity_count: "3", captured_order_count: "8", revenue: "350" }],
+  });
+  const stats = await createAdminStatisticsRepository({ database: fake.database }).getBasicStatistics();
+
+  assert.equal(stats.orders.totalRevenue, 350);
+  assert.equal(stats.topStores[0].revenue, 350);
 });
 
 test("peak hours fills in every hour of the day, even ones with no orders", async () => {
