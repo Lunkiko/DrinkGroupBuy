@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Appearance, Easing, StyleSheet, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { colors as lightColors, darkColors, darkTones, tones as lightTones } from "./tokens";
 import { loadThemeMode, saveThemeMode } from "./themePreference";
@@ -15,26 +15,22 @@ const FADE_OUT_MS = 260;
 // touch-blocking layer is removed after this long anyway.
 const FADE_SAFETY_MS = FADE_IN_MS + FADE_OUT_MS + 1500;
 // The saved choice is read from the phone's key store before the first screen is drawn; if that read is
-// slow or never answers, start with the system setting instead of leaving a blank screen.
+// slow or never answers, give up waiting and show the light-mode default instead of leaving a blank screen.
 const LOAD_TIMEOUT_MS = 1500;
 
 const ThemeContext = createContext({ ...THEMES.light, mode: "light", toggleMode: () => false });
 
-function systemMode() {
-  return Appearance.getColorScheme() === "dark" ? "dark" : "light";
-}
-
 // Screens read colours from here instead of importing them, so the theme can change while the app is
-// running. Until the user taps the toggle the app follows the phone's own light/dark setting (also when it
-// changes while the app is open); after that their choice is remembered and wins.
+// running. A fresh install always starts in light mode, regardless of the phone's own system setting --
+// it never follows system light/dark automatically. Once the user taps the toggle, their choice is saved
+// and wins on every later launch.
 export function ThemeProvider({ children }) {
   const reduceMotion = useReduceMotion();
-  const [mode, setMode] = useState(systemMode);
+  const [mode, setMode] = useState("light");
   const [ready, setReady] = useState(false);
   const [fadeColor, setFadeColor] = useState(null);
   const fadeOpacity = useRef(new Animated.Value(0)).current;
   const fadingRef = useRef(false);
-  const hasChoiceRef = useRef(false);
   const mountedRef = useRef(true);
   const safetyTimerRef = useRef(null);
 
@@ -55,7 +51,6 @@ export function ThemeProvider({ children }) {
     loadThemeMode().then((saved) => {
       if (!active) return;
       if (saved) {
-        hasChoiceRef.current = true;
         setMode(saved);
       }
       setReady(true);
@@ -64,13 +59,6 @@ export function ThemeProvider({ children }) {
       active = false;
       clearTimeout(timeoutId);
     };
-  }, []);
-
-  useEffect(() => {
-    const subscription = Appearance.addChangeListener(({ colorScheme }) => {
-      if (!hasChoiceRef.current) setMode(colorScheme === "dark" ? "dark" : "light");
-    });
-    return () => subscription.remove();
   }, []);
 
   const finishFade = useCallback(() => {
@@ -88,7 +76,6 @@ export function ThemeProvider({ children }) {
   const toggleMode = useCallback(() => {
     if (fadingRef.current) return false;
     const nextMode = mode === "dark" ? "light" : "dark";
-    hasChoiceRef.current = true;
     saveThemeMode(nextMode);
     if (reduceMotion) {
       setMode(nextMode);
