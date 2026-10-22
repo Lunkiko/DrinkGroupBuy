@@ -8,7 +8,9 @@ const {
 } = require("../db");
 const { PaymentServiceError, refundLinePayPayment } = require("./linePayService");
 
-async function createMerchantRefundRequest({ authUser, orderId, body, paymentRefundRepository } = {}) {
+// Everything a merchant-initiated refund request must satisfy before it touches the database:
+// the merchant role, a valid amount and reason, and an order that belongs to one of the caller's own stores.
+async function resolveMerchantRefundInput({ authUser, orderId, body, paymentRefundRepository }) {
   if (!authUser?.roles?.includes("merchant")) {
     throw new PaymentServiceError(403, { error: "Merchant role required" });
   }
@@ -36,6 +38,14 @@ async function createMerchantRefundRequest({ authUser, orderId, body, paymentRef
     throw new PaymentServiceError(403, { error: "Store access denied" });
   }
 
+  return { storeId, requestedAmount, reason };
+}
+
+async function createMerchantRefundRequest({ authUser, orderId, body, paymentRefundRepository } = {}) {
+  const { storeId, requestedAmount, reason } = await resolveMerchantRefundInput({
+    authUser, orderId, body, paymentRefundRepository
+  });
+
   const createInput = {
     orderId,
     storeId,
@@ -49,10 +59,13 @@ async function createMerchantRefundRequest({ authUser, orderId, body, paymentRef
     : createRefundRequestInDatabase(createInput);
 
   if (result.error) {
+    // `...result` first: it carries extra fields like remainingRefundableAmount, but its own
+    // `error` key is the raw machine code -- the human-readable message and `status` below must
+    // come after the spread, or the spread silently overwrites them back to the raw code.
     throw new PaymentServiceError(refundRequestErrorStatusCode(result.error), {
+      ...result,
       error: refundRequestErrorMessage(result.error),
-      status: result.error,
-      ...result
+      status: result.error
     });
   }
   if (result.alreadyExists) {

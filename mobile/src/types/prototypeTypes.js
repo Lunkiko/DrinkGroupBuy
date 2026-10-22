@@ -48,6 +48,11 @@ export const pickupStatusLabels = {
 
 export const refundRequestStatusLabels = {
   pending: "待審核",
-  approved: "已核准",
-  rejected: "已駁回"
+  approved: "已退款",
+  rejected: "未退款"
+};
+
+export const refundMarkStatusLabels = {
+  active: "已標記退款",
+  revoked: "已撤銷"
 };

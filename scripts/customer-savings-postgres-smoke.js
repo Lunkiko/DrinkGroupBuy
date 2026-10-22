@@ -20,10 +20,16 @@ const orderFixtures = [
   { key: "picked-up-discounted", status: "completed", payment: "captured", pickup: "picked_up", cups: 3, original: 195, final: 137 },
   { key: "ready-discounted", status: "locked", payment: "captured", pickup: "ready", cups: 2, original: 130, final: 104 },
   { key: "not-ready-discounted", status: "locked", payment: "captured", pickup: "not_ready", cups: 1, original: 65, final: 46 },
+  // A partial mark is deliberately NOT subtracted from savings (a refund compensates for a
+  // problem, it isn't a change to the group-buy discount) -- this order must still count in full.
+  { key: "partially-refunded-via-mark", status: "completed", payment: "captured", pickup: "picked_up", cups: 1, original: 65, final: 46, refundMarkAmount: 20 },
   // Everything below must NOT count.
   { key: "captured-no-discount", status: "locked", payment: "captured", pickup: "not_ready", cups: 1, original: 65, final: 65 },
   { key: "expired-unclaimed", status: "completed", payment: "captured", pickup: "expired", cups: 1, original: 65, final: 46 },
   { key: "fully-refunded", status: "completed", payment: "refunded", pickup: "picked_up", cups: 1, original: 65, final: 46 },
+  // Scheme B (2026-10-21): payment_status never flips to 'refunded' for a self-reported refund, so
+  // a fully-marked order must be excluded via the active-mark-total check instead.
+  { key: "fully-refunded-via-mark", status: "completed", payment: "captured", pickup: "picked_up", cups: 1, original: 65, final: 46, refundMarkAmount: 46 },
   { key: "cancelled-but-captured", status: "cancelled", payment: "captured", pickup: "cancelled", cups: 1, original: 65, final: 46 },
   { key: "authorized-not-settled", status: "submitted", payment: "authorized", pickup: "not_ready", cups: 1, original: 65, final: null },
   { key: "authorization-voided", status: "cancelled", payment: "authorization_voided", pickup: "cancelled", cups: 1, original: 65, final: null },
@@ -35,8 +41,9 @@ const orderFixtures = [
   activityId: `activity-savings-proof-${fixture.key}-${proofId}`,
 }));
 
-// 195-137 + 130-104 + 65-46 = 58 + 26 + 19; cups 3 + 2 + 1; three orders.
-const expectedDelta = { totalSavedAmount: 103, savedOrderCount: 3, savedCupCount: 6 };
+// 195-137 + 130-104 + 65-46 (not-ready) + 65-46 (partially-refunded-via-mark) = 58 + 26 + 19 + 19;
+// cups 3 + 2 + 1 + 1; four orders.
+const expectedDelta = { totalSavedAmount: 122, savedOrderCount: 4, savedCupCount: 7 };
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -130,6 +137,15 @@ async function createFixture(database, { customerId, merchantUserId }) {
                   'authorized', 'accepted', $9, $10, $10)
       `, [fixture.orderId, fixture.activityId, customerId, fixture.status, fixture.cups,
         fixture.original, fixture.final, fixture.payment, fixture.pickup, iso(-90)]);
+      if (fixture.refundMarkAmount) {
+        await transaction.query(`
+          INSERT INTO merchant_refund_marks (
+            id, order_id, store_id, marked_by_user_id, amount, reason, status,
+            idempotency_key, created_at, updated_at
+          ) VALUES ($1, $2, 'store-001', $3, $4, 'savings proof', 'active', $5, $6, $6)
+        `, [`refund-mark-savings-proof-${fixture.key}-${proofId}`, fixture.orderId, merchantUserId,
+          fixture.refundMarkAmount, `refund-mark-key-savings-proof-${fixture.key}-${proofId}`, iso(-10)]);
+      }
     }
   });
 }
@@ -138,6 +154,7 @@ async function cleanup(database) {
   const orderIds = orderFixtures.map((fixture) => fixture.orderId);
   const activityIds = orderFixtures.map((fixture) => fixture.activityId);
   await database.transaction(async (transaction) => {
+    await transaction.query("DELETE FROM merchant_refund_marks WHERE order_id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM activity_settlements WHERE activity_id = ANY($1::text[])", [activityIds]);
     await transaction.query("DELETE FROM orders WHERE id = ANY($1::text[])", [orderIds]);
     await transaction.query("DELETE FROM group_buy_activities WHERE id = ANY($1::text[])", [activityIds]);

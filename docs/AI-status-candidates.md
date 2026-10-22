@@ -168,6 +168,23 @@ pending -> approved
 
 需要 audit log：是，`refund_request_created`／`refund_request_approved`／`refund_request_rejected` 皆寫入 `audit_logs`。
 
+## 商家退款標記（方案 B：自報退款）
+
+狀態值：`active`、`revoked`。此為 `merchant_refund_marks` 資料表狀態（2026-10-21 新增），與上面「退款申請」的 `refund_requests.status`／`payment_refunds.status` 是完全獨立的狀態機：這張表沒有 provider 呼叫、沒有審核流程，一筆紀錄寫入當下就是終局事實，只能在 24 小時內由本人撤銷。訂單本身的 `orders.payment_status` 不會因為這個狀態改變而變動；顯示用的退款狀態（全額／部分／無退款）是即時加總同一張訂單目前 `active` 狀態的紀錄金額算出來的，不是存成單一欄位。
+
+| 系統狀態 | 說明 |
+| -------- | ---- |
+| `active`  | 商家標記了這筆退款，目前仍然算作「已發生」，計入統計的退款淨額。 |
+| `revoked` | 商家在 24 小時內自行撤銷這筆標記（例如填錯金額），不再計入統計。 |
+
+預期流程：
+
+```text
+active -> revoked
+```
+
+需要 audit log：是，`merchant_refund_mark_created`／`merchant_refund_mark_revoked` 皆寫入 `audit_logs`。
+
 ## 商家申請
 
 狀態值：`pending`、`approved`、`rejected`。此為 `merchant_applications` 資料表狀態，是這個專案第一個「執行期間會建立商家資料」的狀態機（其餘商家帳號都是一次性 seed SQL 建立的）。

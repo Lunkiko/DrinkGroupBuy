@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-21
+updated: 2026-10-22
 ---
 
 ## 功能總覽 [完成]
@@ -12,7 +12,7 @@ updated: 2026-10-21
 - 商家建立與取消團購活動
 - 商家管理店內菜單
 - 商家標記訂單可取餐、查看待製作明細
-- 商家申請退款
+- 商家標記顧客退款（自己退款給顧客後在 App 記錄一筆，24 小時內可撤銷，不經系統執行）
 - 管理員網頁後台審核退款、取消團購、審核商家申請
 - 管理員在網頁後台切換已註冊帳號的顧客／商家使用角色
 - 系統截止結算（折扣試算、正式請款）
@@ -173,13 +173,40 @@ updated: 2026-10-21
       > 一個可以快速執行的自動化檢查腳本，用來確認付款結算功能的核心流程沒有壞掉。
     - 正式告警通知管道 [完成] (8/24) — 新增 `backend/payments/alertNotifier.js`，LINE Pay 對帳排程與結算排程在既有的結構化警示日誌之外，同步呼叫可設定的 `ALERT_WEBHOOK_URL`（通用 webhook，Slack／Discord／Mattermost 的 incoming webhook 都吃同樣的 JSON 格式；不設定就完全不送、不報錯，sandbox/dev 環境本來就不會設）；排程本身丟例外（整個排程掛掉，不是單一工作失敗）也會觸發同一支通知。`/security-review` 抓到一個中風險問題並已修：結算排程失敗時原本會把整個團購活動所有訂單的明細（顧客 ID、金流交易序號、金額）原封不動送到外部 webhook，現在送出前會摘要化成筆數，不再外流逐筆明細。7 個單元測試（含這次修復的驗證）與既有測試共 77/77 全數通過，詳見 `docs/AI-security-review-log.md` 2026-08-24 追加的那筆
       > 上面提到的警示日誌，原本只會寫進系統紀錄裡，要有人自己去翻才看得到；現在補上一個可以接 Slack 之類工具的管道，出事會主動推播，不用等人發現。
-- 商家退款申請 [進行中]
-  > 顧客要退款時，由商家在後台提出退款申請，經過審核（核准或駁回）才會真的退錢，不是顧客自己就能直接退款。
-  - Backend 端 [完成] (8/4) — 申請／審核 API（pending/approved/rejected），`npm run refund-request:smoke` 涵蓋申請、重複阻擋、核准、駁回
-  - Mobile 端：商家申請 UI [進行中] — `MerchantRefundRequestsScreen` 已接 API 且 navigation 可到達；尚未有 Android／真實 provider E2E 證據
-    > 商家在後台看到、提出退款申請的畫面。
-  - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身
+- 商家退款（方案 B：自報設計）[進行中]
+  > 顧客要退款時，不再由系統出面執行退款，改成商家跟顧客自行約定怎麼退（例如商家自己操作 LINE Pay、現金或轉帳），商家只在 App 裡把這筆退款「記一筆」，讓系統的營收統計跟著扣掉這筆錢；商家在記錄後 24 小時內可以自己撤銷這筆記錄（例如填錯金額）。取代原本「商家按鈕→系統直接呼叫 LINE Pay 幫忙退款」的做法。完整規則見 `docs/payment-rules-and-flow.md`「退款」長期方向。
+  - 舊方案 A 直接退款實作 [已封存] (10/21) — 原本「商家按鈕→後端呼叫 LINE Pay 退款 API」的做法，已於同一天確定長期方向改走方案 B 後整支改寫；舊程式碼封存在 git tag `archive/merchant-refund-scheme-a`（commit `27b171e`），需要時可用 `git show archive/merchant-refund-scheme-a:<檔案路徑>` 取回單一檔案的舊內容
+  - 《設計》退款記錄資料表 [完成] (10/21) — 新表 `merchant_refund_marks`（`database/migrations/011_merchant_refund_marks_postgres.sql`，同步加進 `database/schema.sql` 與 `docs/AI-database-field-spec.md`）；經 `backend-architect` 角色 Skill 審查後補強：`status`／`revoked_at`／`revoked_by_user_id` 一致性與「撤銷時間不晚於建立時間 24 小時」各有 CHECK constraint，`idempotency_key` 唯一範圍改成「同一商家內」（不是全域，避免重蹈 `refund_requests` 曾經出現的跨商家冪等鍵碰撞問題），並補上 `(order_id) WHERE status='active'` 的 partial index。已在一次性暫時 Postgres schema（`scripts/with-temp-schema.js`）裡驗證：migration 套用成功、4 種違規寫入（revoked 缺欄位、撤銷超過 24 小時、同商家重複 key、）皆被正確擋下，不同商家可重用相同 key 文字也驗證通過；驗證用的腳本是暫時檔案，驗證完已刪除，不是永久測試
+    > 存放商家標記退款的紀錄：訂單、金額、原因、狀態（生效中／已撤銷）、誰標記的、什麼時候標記的。跟現有的退款申請表分開，不共用，避免影響既有待審申請。
+  - 《開發》Backend：標記與撤銷退款 [完成] (10/22) — 新增 `backend/database/repositories/merchantRefundMarkRepository.js`（Postgres-only，無 SQLite 相容路徑，比照 `merchantApplicationRepository.js` 的理由：這個表之前不存在、runtime 已永久切 PostgreSQL）與 `backend/payments/merchantRefundMarkService.js`；新路由 `POST /api/merchant/orders/:orderId/refund-marks`（標記）與 `POST /api/merchant/orders/:orderId/refund-marks/:markId/revoke`（撤銷），取代舊的 `POST .../refunds`。金額加總驗證在交易內對 `orders` 列下 `FOR UPDATE` 鎖後才計算，同一個鎖也跟請款／取消授權／退款這些既有付款生命週期操作互相序列化，不只是跟別的標記互相序列化。舊的 `refundOrderAsMerchant`（呼叫 LINE Pay refund API 那套）與其專用的 `refundLinePayPaymentAuthorized` 已整支移除（已封存，見上一項）；過程中發現並修正一個既有 bug——`refundRequestService.js` 的 `createMerchantRefundRequest` 組錯誤回應時，`...result` 展開順序在 `error` 欄位之後，會把看得懂的錯誤訊息蓋回原始代碼，手機端 `describeApiError` 的預設訊息因此一直是錯的；新舊兩處都已修正展開順序
+    > 商家標記訂單退款、24 小時內撤銷標記的後端邏輯：金額不能超過訂單可退餘額、只能動自己門市的訂單、防止重複送出。
+  - 《開發》Backend：統計改用即時加總 [完成] (10/22) — 過程中發現方案 B 造成的兩個真實統計 bug（不是改動前就有的）：`payment_status` 自報退款後永遠不會變成 `refunded`，導致（1）`customerSavingsRepository.js` 會把已全額退款的訂單繼續算進顧客「省下金額」，(2) `merchantStatisticsRepository.js` 的商家營收會把已全額退款的訂單繼續算進營收（原本只有部分退款會漏扣，現在連全額退款也會，比改動前更嚴重）。已修：顧客省下金額新增「active 退款加總 < final_amount」才算的條件；商家營收扣項來源當時換成只看 `merchant_refund_marks`（status='active'），後來 10/22 的 `/code-review` 抓到這個換法是「換掉」不是「加上去」，漏扣了還在走舊管理員審核路徑（`payment_refunds`）的部分退款；已改成兩個來源的金額分開加總、同時扣（見下方「《審查》/code-review」那筆）。兩個改動都重新驗證過 Postgres smoke（`customer-savings-postgres:smoke`、`merchant-statistics-postgres:smoke`，各自新增涵蓋「透過自報全額退款應排除」「透過自報部分退款不應排除」的情境），並修正對應的假資料庫單元測試斷言。`npm test` 306/306
+    > 商家營收等統計查詢，改成即時扣掉目前「生效中」的退款金額，不去改動團購結算當下留下的折扣快照。
+    - **已知未修的缺口（刻意不在這次範圍）**：`adminStatisticsRepository.js`（管理員後台的平台總營收、週趨勢、各店排行）完全沒有任何退款扣除邏輯，過去（方案 A）全額退款會因為 `payment_status` 變成 `refunded` 而整筆被排除在統計外，部分退款則本來就沒扣；方案 B 下連全額退款也不會再被排除，等於管理員看到的平台總營收會比實際偏高。這個檔案影響範圍較大（多個查詢共用同一套慣例），刻意不在這次一起改，列為待辦，之後要改時用跟這次相同的手法（`merchant_refund_marks` LEFT JOIN）即可
+  - 《審查》/security-review [完成] (10/22) — 獨立審查者＋獨立覆核者兩階段流程，抓到 1 個中風險問題並已修：`merchantRefundMarkRepository.js` 的冪等鍵查到既有紀錄後沒有驗證訂單／金額是否match這次請求，商家把同一把 key 用在自己名下不同訂單時會被靜默當成功、新訂單實際沒寫入——這正是 2026-10-21 那筆記錄裡修過的同一類問題，但沒有被搬進這次新表。已修（新增共用的 `matchesIdempotentReplay` 檢查，早查與併發回收兩條路徑都套用），新增 1 個單元測試＋1 個 Postgres smoke 情境驗證。詳細記錄見 `docs/AI-security-review-log.md` 2026-10-22「商家退款改方案 B」那筆
+    > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
+  - 《開發》Mobile：商家退款畫面改版 [完成] (10/22) — `MerchantRefundRequestsScreen.jsx` 改接新端點（`markOrderRefunded`／`revokeRefundMark`／`listMerchantRefundMarks`，`apiClient.js` 新增）；表單改顯示「剩餘可退金額」（結算金額減掉目前生效中的標記金額，不是訂單原金額），確認視窗文字按建議改成兩句話（這只是記錄，商家要自己退錢／24 小時內可撤銷），拿掉原本的危險色警示；退款紀錄卡片新增「撤銷」按鈕，用絕對時間顯示「可撤銷至 MM/DD HH:mm」（不做即時倒數），撤銷用兩段式按鈕確認（先「再按一次取消」／「確定撤銷」，不是跳 modal）。新增 `refundMarkStatusLabels`（`prototypeTypes.js`）與對應色調（`statusTones.js`：`active`=success、`revoked`=neutral），`StatusBadge` 註冊新 owner；同步更新 `themeTokens.test.mjs` 的 `LABEL_MAPS`（這是硬寫的清單，不會自動抓到新加的狀態）。後端新增對應的 `GET /api/merchant/stores/:storeId/refund-marks` 列表端點（含 repository／route／兩個 Postgres-ready 守門清單）
+    > 商家選一筆已請款的訂單、填金額和原因、在確認視窗按下確認後標記退款的畫面；下方同一頁可以看到自己標記過的退款記錄，24 小時內能撤銷。
+  - 《驗證》瀏覽器端對端操作 [完成] (10/22) — 本機啟動 backend（port 3001）與 `mobile:web:dev`（自動指向本機 backend，不用改 `.env`），用既有的開發身份切換器登入 `merchant1`（青山手作茶 中科店）這個真實種子帳號，對真實已請款訂單（`demo-seed-order-378-01`，$50）實際操作一輪完整流程：填金額原因→確認視窗文字正確顯示→標記成功→訂單正確顯示「已全額標記退款」→退款紀錄卡片正確顯示金額／原因／「可撤銷至」時間→兩段式撤銷按鈕正確運作→撤銷成功→訂單恢復可退款狀態。全程瀏覽器 console 無錯誤。事後查資料庫確認訂單本身未受影響（`payment_status` 仍是 `captured`），只留下一筆 `status = 'revoked'` 的標記記錄作為這次驗證的痕跡，不影響任何既有資料
+  - 《測試》自動化測試與 Postgres 暫時 schema 測試 [完成] (10/22) — 單元測試 `backend/payments/merchantRefundMarkService.test.js`（15 項，涵蓋角色/門市權限、金額與原因驗證、冪等重送、超額、撤銷擁有者、撤銷視窗、撤銷已撤銷的冪等行為、跨訂單/門市的 404），`npm test` 306/306 全過。真實 Postgres smoke `scripts/merchant-refund-mark-postgres-smoke.js`（`npm run merchant-refund-mark-postgres:smoke`）涵蓋標記、冪等、超額金額、跨門市拒絕、撤銷、非本人撤銷、撤銷逾期，以及**兩個真實資料庫連線同時標記同一張訂單、金額加總會超過上限**的併發測試，確認剛好一筆成功、一筆被擋下，證明 `FOR UPDATE` 鎖真的序列化了併發寫入，不只是語法過關。migration 011 已套用到本機開發資料庫（純新增表，未改動既有資料）
+  - 《審查》/security-review [待處理]
+    > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
+  - 《審查》/code-review --fix medium [完成] (10/22) — 8 個角度各自找候選問題、每個候選再經獨立覆核者確認，共 8 個問題全部確認（7 個 CONFIRMED、1 個 PLAUSIBLE）並當場修掉：(1) 商家營收統計漏扣管理員審核路徑的部分退款（見上方統計那筆的更新說明）；(2) `linePayService.js` 的管理員退款錯誤訊息被展開順序蓋掉（這個 PR 在別處修過同一類 bug，這裡漏改）；(3) 冪等鍵重複檢查沒比對退款原因，原因改了會被當成同一筆靜默吞掉；(4) 手機端缺少「冪等鍵衝突」這個錯誤代碼對應的訊息；(5) 新的 `active`／`revoked` 狀態值沒補進 `docs/AI-status-candidates.md`；(6) 標記退款的資料庫交易查詢數可以再少、縮短鎖定時間；(7) `apiClient.js` 兩個改版後沒人呼叫的舊退款申請函式；(8) 商家退款畫面的剩餘可退金額計算沒做 `useMemo`。修完後 `npm test` 307/307、`merchant-refund-mark-postgres:smoke`／`merchant-statistics-postgres:smoke`／`customer-savings-postgres:smoke`／`payment-refund-postgres:smoke` 全過
+    > 針對這次分支改動（不含已經單獨跑過 `/security-review` 的那部分）再跑一次程式碼品質與正確性審查。
+  - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身，這次方案 B 改動不動這個頁面，繼續處理既有的待審申請
     > 平台營運人員審核退款申請、決定核准或駁回的網頁畫面，跟顧客/商家用的手機 App 是分開的。
+- 多店各自金流帳號 [待處理]
+  > 目前全部商店共用平台的一組 LINE Pay 帳號；這塊要改成每間店各自有自己的收款帳號設定，系統依訂單所屬的店家查出對應帳號再去呼叫 LINE Pay。這次先用模擬（非真實）帳號驗證整條架構，不申請真實 LINE Pay 商家帳號，也不做商家自己管理帳號設定的畫面。
+  - 《設計》店家金流帳號資料表 [待處理]
+    > 存放每間店的收款帳號設定（哪個金流服務、帳號代碼、密鑰）。
+  - 《開發》Backend：LINE Pay 呼叫改吃店家帳號 [待處理]
+    > 付款、確認、請款、取消授權這幾個跟 LINE Pay 溝通的函式，改成先查這筆訂單屬於哪家店、用該店的帳號設定去呼叫，不再全部共用同一組寫死的設定。
+  - 《開發》模擬帳號種子資料 [待處理]
+    > 幫測試商店各自配一組模擬收款帳號，用來驗證整條邏輯跑得通，不需要真的申請 LINE Pay。
+  - 《測試》自動化測試 [待處理]
+    > 確認不同店家的訂單真的各自用到對應的模擬帳號，不會串到別家店。
+  - 《審查》/security-review [待處理]
+    > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
 
 ## 訂單流程 [進行中]
 > 顧客下單之後，訂單會經過的每個階段：選飲料、修改訂單、取貨、逾期沒取怎麼處理。

@@ -86,6 +86,10 @@ const {
   rejectRefundRequest
 } = require("./payments/refundRequestService");
 const {
+  markOrderRefundedByMerchant,
+  revokeMerchantRefundMark
+} = require("./payments/merchantRefundMarkService");
+const {
   approveMerchantApplication,
   rejectMerchantApplication,
   submitMerchantApplication
@@ -177,6 +181,9 @@ const {
 const {
   createPaymentRefundRepository
 } = require("./database/repositories/paymentRefundRepository");
+const {
+  createMerchantRefundMarkRepository
+} = require("./database/repositories/merchantRefundMarkRepository");
 const {
   createMerchantApplicationRepository
 } = require("./database/repositories/merchantApplicationRepository");
@@ -329,6 +336,8 @@ const paymentRefundRepository = createPaymentRefundRepository({
     getLatestProviderEventPayload: (value) => getLatestPaymentProviderEventPayload(value),
   },
 });
+// Postgres-only, no sqliteGateway -- see merchantRefundMarkRepository.js's module comment.
+const merchantRefundMarkRepository = createMerchantRefundMarkRepository({});
 // Postgres-only, no sqliteGateway -- see merchantApplicationRepository.js's module comment.
 const merchantApplicationRepository = createMerchantApplicationRepository({});
 // Postgres-only, no sqliteGateway -- see merchantMenuImportRepository.js's module comment.
@@ -1229,6 +1238,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const merchantRefundMarksListMatch = url.pathname.match(/^\/api\/merchant\/stores\/([^/]+)\/refund-marks$/);
+    if (request.method === "GET" && merchantRefundMarksListMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) return sendJson(response, 401, { error: "Authentication required" });
+      if (!authUser.roles.includes("merchant") || !canManageStore(authUser, merchantRefundMarksListMatch[1])) {
+        return sendJson(response, 403, { error: "Store access denied" });
+      }
+      const refundMarks = await merchantRefundMarkRepository.listRefundMarksForStore({
+        storeId: merchantRefundMarksListMatch[1],
+        status: url.searchParams.get("status") || undefined
+      });
+      sendJson(response, 200, { refundMarks });
+      return;
+    }
+
     const createMerchantRefundRequestMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-requests$/);
     if (request.method === "POST" && createMerchantRefundRequestMatch) {
       const authUser = await getAuthenticatedUser(request);
@@ -1246,6 +1270,63 @@ const server = http.createServer(async (request, response) => {
           paymentRefundRepository: refundPostgresReady ? paymentRefundRepository : undefined
         });
         sendJson(response, 201, result);
+      } catch (error) {
+        if (error instanceof PaymentServiceError) {
+          sendJson(response, error.statusCode, error.payload);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    // Scheme B self-reported refund (2026-10-21): the merchant and customer settle the refund
+    // themselves; this never calls a provider, it only records what the merchant says happened.
+    // All permission, store-ownership and amount checks live in merchantRefundMarkService.
+    const markOrderRefundedMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-marks$/);
+    if (request.method === "POST" && markOrderRefundedMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) {
+        sendJson(response, 401, { error: "Authentication required" });
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      try {
+        const result = await markOrderRefundedByMerchant({
+          authUser,
+          orderId: markOrderRefundedMatch[1],
+          body,
+          merchantRefundMarkRepository
+        });
+        sendJson(response, result.idempotent ? 200 : 201, result);
+      } catch (error) {
+        if (error instanceof PaymentServiceError) {
+          sendJson(response, error.statusCode, error.payload);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    // Undo a refund mark within its 24-hour window -- see docs/payment-rules-and-flow.md "退款".
+    const revokeRefundMarkMatch = url.pathname.match(/^\/api\/merchant\/orders\/([^/]+)\/refund-marks\/([^/]+)\/revoke$/);
+    if (request.method === "POST" && revokeRefundMarkMatch) {
+      const authUser = await getAuthenticatedUser(request);
+      if (!authUser) {
+        sendJson(response, 401, { error: "Authentication required" });
+        return;
+      }
+
+      try {
+        const result = await revokeMerchantRefundMark({
+          authUser,
+          orderId: revokeRefundMarkMatch[1],
+          markId: revokeRefundMarkMatch[2],
+          merchantRefundMarkRepository
+        });
+        sendJson(response, 200, result);
       } catch (error) {
         if (error instanceof PaymentServiceError) {
           sendJson(response, error.statusCode, error.payload);
@@ -4670,6 +4751,9 @@ function isSqliteOrderDependentRoute(method, pathname) {
     || /^\/api\/merchant\/group-buy-activities\/[^/]+(?:\/orders\/[^/]+)?\/ready-for-pickup$/.test(pathname)
     || /^\/api\/admin\/group-buy-activities\/[^/]+\/settle$/.test(pathname)
     || /^\/api\/merchant\/orders\/[^/]+\/refund-requests$/.test(pathname)
+    || /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
+    || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
+    || /^\/api\/merchant\/stores\/[^/]+\/refund-marks$/.test(pathname)
     || /^\/api\/merchant\/stores\/[^/]+\/refund-requests$/.test(pathname)
     || pathname === "/api/admin/refund-requests"
     || /^\/api\/admin\/refund-requests\/[^/]+\/(approve|reject)$/.test(pathname)
@@ -4721,6 +4805,23 @@ function isSettlementRouteReadyForPostgres(method, pathname) {
     orderRevisionRepository.kind === "postgres"
     && method === "POST"
     && /^\/api\/orders\/[^/]+\/revisions$/.test(pathname)
+  ) {
+    return true;
+  }
+  if (
+    method === "POST"
+    && merchantRefundMarkRepository.kind === "postgres"
+    && (
+      /^\/api\/merchant\/orders\/[^/]+\/refund-marks$/.test(pathname)
+      || /^\/api\/merchant\/orders\/[^/]+\/refund-marks\/[^/]+\/revoke$/.test(pathname)
+    )
+  ) {
+    return true;
+  }
+  if (
+    method === "GET"
+    && merchantRefundMarkRepository.kind === "postgres"
+    && /^\/api\/merchant\/stores\/[^/]+\/refund-marks$/.test(pathname)
   ) {
     return true;
   }

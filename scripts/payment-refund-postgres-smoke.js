@@ -13,6 +13,10 @@ const {
   rejectRefundRequest,
 } = require("../backend/payments/refundRequestService");
 
+// Scheme B's merchant_refund_marks (self-reported refund, no provider call) has its own smoke
+// test -- see merchant-refund-mark-postgres-smoke.js -- rather than this file, which covers the
+// admin/provider-calling refund paths that are still live (direct admin refund, the merchant
+// request + admin approve/reject workflow).
 const proofId = randomUUID();
 const activityId = `activity-refund-proof-${proofId}`;
 const orderIdDirect = `order-refund-direct-${proofId}`;
@@ -213,9 +217,9 @@ async function createFixture(database) {
       pickupStart.toISOString(), pickupEnd.toISOString()]);
 
     const orders = [
-      { id: orderIdDirect, customerId: customersResult.rows[0].id, amount: 80 },
-      { id: orderIdApprove, customerId: customersResult.rows[1].id, amount: 60 },
-      { id: orderIdReject, customerId: customersResult.rows[2].id, amount: 50 },
+      { id: orderIdDirect, activityId, customerId: customersResult.rows[0].id, amount: 80 },
+      { id: orderIdApprove, activityId, customerId: customersResult.rows[1].id, amount: 60 },
+      { id: orderIdReject, activityId, customerId: customersResult.rows[2].id, amount: 50 },
     ];
     for (const order of orders) {
       await transaction.query(`
@@ -226,7 +230,7 @@ async function createFixture(database) {
           submitted_at, updated_at
         ) VALUES ($1, $2, $3, 'submitted', 'decline_original_price',
                   1, $4, $4, 'captured', 'captured', 'accepted', 'not_ready', $5, $5)
-      `, [order.id, activityId, order.customerId, order.amount, now.toISOString()]);
+      `, [order.id, order.activityId, order.customerId, order.amount, now.toISOString()]);
 
       const authorizationId = `payment-authorization-refund-proof-${order.id}`;
       await transaction.query(`

@@ -188,7 +188,7 @@ export function MerchantDashboardScreen({ navigation, route, appState, actions, 
         {tab === "active" ? (
           <View style={styles.headerActions}>
             <Pressable accessibilityRole="button" onPress={() => navigation.push("merchantRefundRequests")}>
-              <Text style={styles.createLink}>退款申請</Text>
+              <Text style={styles.createLink}>退款</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => navigation.push("merchantCreate")}>
               <Text style={styles.createLink}>＋ 開團</Text>

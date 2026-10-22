@@ -230,8 +230,8 @@ API JSON 使用 `camelCase`。已實作 routes 只對目前開發 prototype 具�
 | Request       | 需要後端補救權限；目前 route 使用 admin bearer token。Body: `{ orderId?, captureId?, providerTransactionId?, refundAmount?, reason?, idempotencyKey?, provider? }`；正式使用預設 `provider = line_pay`，`mock_line_pay` 只供非 production smoke test |
 | Response      | `{ refund, capture, order, status, fullyRefunded, totalRefundedAmount, remainingRefundableAmount, providerTransactionId }` |
 | 已實作規則    | 只允許已 capture 的付款退款；未指定 `refundAmount` 時退剩餘全額；退款金額不可超過剩餘可退金額；用 `payment_refunds.idempotency_key` 防止重複退款；同一 key 已退款時回傳 idempotent 結果；成功寫入 `payment_refunds`、provider event 與 audit log；全額退款後 `orders.payment_status = refunded` |
-| 正式產品規則  | 商家不得直接呼叫此 route；商家只能針對自己門市的已請款訂單提出退款申請並填寫金額與原因，由營運／補救權限核准後執行 |
-| 尚缺實作      | 商家退款申請與營運審核／執行 UI、退款失敗專用 retry／reconciliation job、正式告警通知與 sandbox 人工端對端測試 |
+| 正式產品規則  | 商家不得呼叫此 route（admin-only）；商家改用 `POST /api/merchant/orders/:orderId/refunds` 直接退款（2026-10-21 起），單筆不得超過剩餘可退金額 |
+| 尚缺實作      | 退款失敗專用 retry／reconciliation job、正式告警通知、每日上限與異常暫停、sandbox 人工端對端測試 |
 
 ### LINE Pay Confirm Redirect
 
@@ -313,7 +313,8 @@ API JSON 使用 `camelCase`。已實作 routes 只對目前開發 prototype 具�
 | `POST /api/payment-authorizations/:authorizationId/void`    | 取消未使用授權               | Provider expiry 與 idempotency                 |
 | `POST /api/payment-authorizations/:authorizationId/capture` | Partial capture final amount | Backend payment module 已有內部 capture service、持久化重試與跨程序 lease；尚未開公開 API |
 | `POST /api/payment-captures/:captureId/refunds`             | Provider-neutral refund      | 目前已先實作 LINE Pay 專用開發 / 後端補救 route；正式 API shape 尚未決定 |
-| `POST /api/merchant/orders/:orderId/refund-requests`        | 商家提出退款申請              | 已實作第一版：只允許所屬門市、已請款且仍有可退餘額的訂單；需金額（`requestedAmount`）與原因（`reason`），可帶 `idempotencyKey`；不直接呼叫 provider，同一筆請款同時只允許一筆 `pending` 申請 |
+| `POST /api/merchant/orders/:orderId/refunds`                | 商家直接退款（2026-10-21）     | 已實作：需 merchant 角色與所屬門市；`requestedAmount`（正整數，不得超過剩餘可退金額）、`reason`（≤200 字）、`idempotencyKey`（8–128 字元，必填）；先建立 `pending` 申請列、立刻執行 LINE Pay refund、成功標 `approved`、金流商拒絕標 `rejected`；同 key 重送回傳第一次結果（HTTP 200），key 已被別的訂單／金額／商家用過回 409 `idempotency_key_conflict` |
+| `POST /api/merchant/orders/:orderId/refund-requests`        | 商家提出退款申請（舊流程，保留） | 已實作第一版：只允許所屬門市、已請款且仍有可退餘額的訂單；需金額（`requestedAmount`）與原因（`reason`），可帶 `idempotencyKey`；不直接呼叫 provider，同一筆請款同時只允許一筆 `pending` 申請 |
 | `GET /api/merchant/stores/:storeId/refund-requests`         | 商家查詢自己門市的退款申請     | 已實作第一版；可選 `status` 篩選，沿用 `canManageStore` 門市權限檢查 |
 | `GET /api/admin/refund-requests`                            | 營運查詢待審核退款申請佇列     | 已實作第一版，admin-only；可選 `status` 篩選 |
 | `POST /api/admin/refund-requests/:requestId/approve`        | 營運核准並執行退款            | 已實作第一版，admin-only；內部重用既有 LINE Pay refund service（含 idempotency）；provider 失敗時申請維持 `pending` 供重試，尚未接正式告警通知 |

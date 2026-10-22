@@ -424,6 +424,25 @@ PostgreSQL 直接連結 `store_id`，不保存舊 SQLite 相容 schema 的 `merc
 | 14  | `created_at`                    | 建立時間                | timestamptz |        | ISO 8601 日期時間                        | `2026-08-04T15:59:00+08:00`  |
 | 15  | `updated_at`                    | 更新時間                | timestamptz |        | ISO 8601 日期時間                        | `2026-08-04T16:00:00+08:00`  |
 
+## `merchant_refund_marks`
+
+2026-10-21 新增。方案 B（商家自有帳號）的自報退款紀錄：商家跟顧客自行解決退款，系統不呼叫任何 provider，只記錄「商家說這筆退了多少、為什麼」。跟 `refund_requests`／`payment_refunds` 是分開的兩張表、刻意不共用——舊兩張表的語意是「等 provider 回應」（`pending`→`approved`/`refunded`），跟這張表「建立就是終態」的語意不同，共用會影響舊的申請／審核流程仍在處理的既有資料。同一筆 `order_id` 可以有多筆紀錄（分次標記）；某張訂單目前仍生效（`status = 'active'`）的紀錄金額加總，不得超過該訂單的 `orders.final_amount`——這個加總檢查在應用層的資料庫交易內做（鎖定該訂單，比照 `refundRequestService.js` 既有的鎖法），不是 DB constraint，因為 CHECK constraint 看不到同一張表其他列的加總。撤銷（`status` 改為 `revoked`）只能在 `created_at` 起 24 小時內由標記者本人執行，這個「現在能不能撤銷」的授權判斷在應用層做；但「撤銷時間不晚於建立時間 24 小時以上」已另外加一條 CHECK（`merchant_refund_marks_revoked_within_window`）當資料完整性防護網，兩者職責不同、不互相取代。`status` 與 `revoked_at`／`revoked_by_user_id` 是否一致，也有 CHECK（`merchant_refund_marks_revoked_fields_consistent`）保證，不依賴程式碼自律。
+
+| No. | Field name            | 中文名稱             | Type    | Key    | 規則 / 格式 / 範圍                                   | Example                      |
+| --- | ---------------------- | -------------------- | ------- | ------ | ------------------------------------------------------ | ------------------------------ |
+| 1   | `id`                   | 退款紀錄編號          | TEXT    | PK     | 建議使用 `refund-mark-` 加唯一後綴                      | `refund-mark-001`              |
+| 2   | `order_id`             | 訂單編號              | TEXT    | FK     | References `orders(id)`；只能是 `payment_status = 'captured'` 的訂單 | `order_001`         |
+| 3   | `store_id`             | 店家編號              | TEXT    | FK     | References `stores(id)`；冗餘存一份，省去每次查詢都要 join `orders` 才能做門市權限檢查 | `store_001` |
+| 4   | `marked_by_user_id`    | 標記退款的商家使用者  | TEXT    | FK     | References `users(id)`                                  | `user-merchant-001`            |
+| 5   | `amount`               | 退款金額              | INTEGER |        | `> 0`；該訂單所有 `status = 'active'` 紀錄加總不得超過 `orders.final_amount` | `248`           |
+| 6   | `reason`               | 退款原因              | TEXT    |        | 必填，應用層限制最多 200 字                              | `顧客反映飲品品質異常`         |
+| 7   | `status`               | 紀錄狀態              | TEXT    |        | `active`, `revoked`                                      | `active`                       |
+| 8   | `idempotency_key`      | 冪等鍵                | TEXT    | UNIQUE (與 `marked_by_user_id` 組合) | 必填（跟 `refund_requests` 不同，這裡不可為 NULL）；唯一範圍是「同一商家內」，不是全域唯一——避免重蹈 `refund_requests` 曾經出現過的跨商家冪等鍵碰撞問題 | `refund-mark-order-001-1` |
+| 9   | `revoked_at`           | 撤銷時間              | timestamptz |        | 尚未撤銷為 NULL                                     | `2026-10-21T16:00:00+08:00`    |
+| 10  | `revoked_by_user_id`   | 撤銷者                | TEXT    | FK     | 尚未撤銷為 NULL；References `users(id)`；規則上只能是 `marked_by_user_id` 本人 | `user-merchant-001` |
+| 11  | `created_at`           | 建立（標記）時間      | timestamptz |        | ISO 8601 日期時間；24 小時可撤銷期限從這個時間起算       | `2026-10-21T15:59:00+08:00`    |
+| 12  | `updated_at`           | 更新時間              | timestamptz |        | ISO 8601 日期時間                                       | `2026-10-21T16:00:00+08:00`    |
+
 ## `merchant_applications`
 
 2026-09-10 新增。保存商家自助申請的資料，供管理員在 `/admin/merchant-applications` 審核；核准時才在同一個交易裡建立 `merchants`／`stores`／`merchant_users`／`user_roles`（若申請人是全新的 Google 帳號，一併建立 `users`）。這是這個專案第一個會在執行期間（不是一次性 seed SQL）建立商家資料的路徑。緯度／經度不存在這張表，由管理員審核時直接手動填進 `stores.latitude`／`stores.longitude`（無 Geocoding 整合）。同一個 `applicant_firebase_uid` 同時只允許一筆 `status = 'pending'` 的申請（partial unique index）。

@@ -1671,6 +1671,72 @@
 | 真瀏覽器驗證 | 用內建瀏覽器對暫時 schema 上的真後端實際操作：共用密碼登入（表單送出加 302）、後台首頁／帳號角色／退款審核／商家申請／數據統計／匯入菜單六個頁面載入且表單數量正確、登出（表單送出加轉址）；控制台沒有任何 CSP 違規或被擋下的訊息；從頁面內嵌入 iframe 確實被擋下；瀏覽器端看到的標頭與設計一致 |
 | 沒驗證到 | 部署到 Azure 後的實際回應標頭（含 HSTS）；LINE Pay 結果頁在真實付款流程中的行為（頁面沒有框架嵌入也沒有外部表單，預期不受影響，但沒有走完整付款流程）；Firebase 後台登入頁（需要真實 Firebase 設定，暫時環境沒有） |
 
+## 2026-10-21 — 商家直接退款（取代「商家申請、營運審核」），金流改動
+
+**範圍**：`backend/payments/refundRequestService.js`（新增 `refundOrderAsMerchant`、共用驗證 `resolveMerchantRefundInput`）、`backend/payments/linePayService.js`（退款函式拆成管理員入口與「已授權」入口）、`backend/server.js`（新路由 `POST /api/merchant/orders/:orderId/refunds`、Postgres 守門清單）、`mobile/` 的退款畫面與 API 呼叫、`scripts/payment-refund-postgres-smoke.js`
+**觸發原因**：金流改動，依全域規則自動觸發；使用者決定「商家直接退、單筆不超過該單金額、要有確認視窗」，目的是降低營運成本。這是改掉 `docs/open-questions.md` 裡原本「商家不可直接退款」的已決定規則（不是呼應本檔先前某一筆發現）
+**方法**：先由我自己追一遍授權、金額、冪等、併發；再另開一個沒看過我思路的獨立審查者只給 diff 與背景，要求從 HTTP 請求追到真正退錢的呼叫；審查者的結論是模型輸出，我對照程式碼抽查了關鍵守門位置。審查者只讀程式沒有執行，執行驗證另做（見最後一節）
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 中 | `refundRequestService.js` `refundOrderAsMerchant`（自查發現，在送去獨立審查前） | 冪等鍵的查詢是全域的：商家 B 用商家 A 的冪等鍵送出，資料庫會回傳 A 的退款申請；原本的流程沒有確認它屬於同一筆訂單與同一間店，若 A 的申請停在 `pending`，B 的呼叫會對 A 的訂單執行退款，並把 A 的申請內容回傳給 B（鍵是客戶端用時間加 `Math.random` 產生，不是密碼學亂數） | 取回的申請必須與這次的訂單、門市、送出者、金額完全一致，否則回 409 `idempotency_key_conflict` 且不回傳對方的申請 | 已修；新增單元測試（別的訂單、別的金額、別的商家、別人留下的 `pending` 申請都被擋下且不退款） |
+| 低 | `server.js` `isSqliteOrderDependentRoute`（獨立審查者觀察） | 新路由沒加進「訂單執行模式不是 Postgres 就回 503」的守門清單，跟同類的 `/refund-requests` 不一致；設定錯誤時會默默改走 SQLite 備援，不是可被利用的漏洞 | 加進清單 | 已修 |
+| 低 | `refundRequestService.js` `runRefundForRequest`（獨立審查者觀察） | 申請建立後，若退款在金流商拒絕以外的情況失敗（例如期間內另有一筆退款讓金額放不下），申請會停在 `pending`，擋住該訂單的新退款，直到管理員處理 | 除了「稍後再試」兩種結果（訂單鎖被佔用、同一筆退款處理中）以外，失敗都把申請標為 `rejected` | 已修；新增單元測試 |
+
+獨立審查者的結論：沒有信心度達 8/10 的漏洞，下列攻擊路徑都有擋下（括號為我另外核對過的守門處）。
+
+### 沒發現問題的部分
+
+| 攻擊路徑 | 為何擋得住 |
+|----------|-----------|
+| 跨門市退款（改別人的訂單編號） | 身分的角色與 `merchantStores` 每次請求從資料庫讀，不是用客戶端宣告的值；訂單所屬門市由資料庫查出並必須在商家自己的門市清單內，建立申請的交易內再比對一次擁有該筆請款的門市（`order_store_mismatch`） |
+| 退超過可退金額、竄改金額 | 金額必須是正整數；上限在資料庫交易內用請款金額減已退金額重算；真正退錢的呼叫不使用客戶端的 body，是用資料庫裡的申請金額、訂單、伺服器產生的冪等鍵與原因，金流商由該訂單的授權紀錄決定；退款前在訂單鎖與請款列 `FOR UPDATE` 下再檢查一次，同一訂單的退款被序列化 |
+| 重複退款 | 退錢用的冪等鍵是 `refund-request-approval:<申請編號>`，申請編號由伺服器隨機產生，客戶端選不了；管理員核准用同一格式，所以商家直接退後管理員再核准同一筆不會再退；同一筆請款同時只能有一筆 `pending`（唯一索引） |
+| 透過「已授權」入口提權 | 該函式只被 `refundRequestService` 引用，唯一呼叫處在商家身分、門市、金額檢查之後；沒有任何路由把客戶端的 body 直接交給它；管理員入口的管理員角色檢查原封不動；`mock_line_pay` 在正式環境不可用，商家也選不了金流商 |
+| SQL 注入、字串欄位 | 退款路徑的 SQL 全是參數化；原因最長 200 字、冪等鍵 8 到 128 字、型別檢查為字串 |
+| 資料外洩 | 冪等鍵衝突的 409 不回傳對方的申請；錯誤回應攤開的「已有待處理申請」屬於同一筆請款也就是同一間店（這個攤開寫法是既有的，不是這次新增） |
+
+### 還沒做、沒驗證到的部分
+
+- 每日總額上限、單一商家異常退款自動暫停：未做，已列在 `docs/open-questions.md`。這是這次決定把「營運審核」換成「單筆上限加事後紀錄」的代價：商家若帳號被盜，單筆上限擋不住連續很多筆，每筆都在餘額內。
+- 真實 LINE Pay sandbox 的人工端對端測試、Android 實機：未做。
+- 執行驗證（我自己跑的）：手機與後端 `npm test` 302 項全過（含 9 項新的單元測試）；`payment-refund-postgres-smoke.js` 在暫時 schema 裡通過（既有的管理員退款、冪等、鎖、申請流程不變，另新增商家直接退款、同鍵重送、超額、別門市、全額退款後狀態變 `refunded` 五個情境）；網頁展示模式用暫時假資料看過確認視窗、成功、失敗與前端超額提示三個畫面（假資料已移除）。
+
+---
+
+## 2026-10-22 — 商家退款改方案 B（自報退款，取代方案 A 直接呼叫 LINE Pay），金流改動
+
+**範圍**：新表 `merchant_refund_marks`（`database/migrations/011_merchant_refund_marks_postgres.sql`）、新 repository／service（`backend/database/repositories/merchantRefundMarkRepository.js`、`backend/payments/merchantRefundMarkService.js`）、新路由（`POST /api/merchant/orders/:orderId/refund-marks` 標記、`.../refund-marks/:markId/revoke` 撤銷、`GET /api/merchant/stores/:storeId/refund-marks` 列表）、手機端 `MerchantRefundRequestsScreen.jsx` 改版、以及因為 `payment_status` 不再因退款變成 `refunded` 而連帶要修的兩個統計查詢（`customerSavingsRepository.js`、`merchantStatisticsRepository.js`）。同時整支移除舊的 `refundOrderAsMerchant`（呼叫 LINE Pay refund API 那套，已封存在 git tag `archive/merchant-refund-scheme-a`）。
+**觸發原因**：金流改動，依全域規則自動觸發；使用者決定長期方向改走方案 B——商家與顧客自行解決退款，系統只記錄金額與原因、不呼叫金流商、24 小時內可撤銷。
+**呼應**：這是 2026-10-21「商家直接退款」那筆的後續——那次核准的方案 A 設計（商家按鈕直接呼叫 LINE Pay 退款）已經整支廢棄，不是這次要確認的對象；但那次發現的「冪等鍵查到後要驗證跟這次請求是同一筆，否則不能當成功回傳」這個問題類別，在這次新寫的 `merchant_refund_marks` repository 裡重新出現過一次，見下方發現第一項。
+**方法**：先由我自己寫完整套流程（schema → repository → service → 路由 → 手機畫面 → 統計查詢），每一層都用真實 Postgres（暫時 schema 或真實本機開發資料庫）與瀏覽器端對端操作驗證過，不是只看過單元測試。寫完後另開一個沒看過我思路的獨立審查者，只給 diff 與背景，要求從 HTTP 請求追到資料寫入；找到的發現再另開一個獨立驗證者覆核，不接受審查者自己的信心分數，要求覆核者重新讀程式碼確認。
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 中 | `merchantRefundMarkRepository.js` `createRefundMarkPostgres`（獨立審查者發現，覆核確認） | 冪等鍵查詢只用 `(marked_by_user_id, idempotency_key)` 找到既有紀錄就直接當成功回傳，沒有驗證這筆紀錄的訂單、金額是不是這次請求要的——商家把同一把 key 用在自己名下兩筆不同訂單時，第二筆會被靜默當成「已經成功」回傳第一筆的紀錄，第二筆訂單實際上什麼都沒寫入，統計也不會照商家以為的扣下去。這正是 2026-10-21 那筆記錄裡「商家直接退款」已經修過的同一類問題，但沒有被搬進這次新寫的表——移植到新表的只有「冪等鍵範圍改成同商家內」這個結構性修法，沒有把「查到之後要再驗證」這條也一起搬過來 | 查到既有紀錄後，比對 `order_id`、`amount`（有帶 `storeId` 時也比對）是否跟這次請求一致，不一致回 `idempotency_key_conflict`（對應 409），不回傳不相關的那筆紀錄；交易內的早查路徑與 `23505` 併發回收路徑都要套用同一個檢查 | 已修（`matchesIdempotentReplay` 共用檢查函式，兩個路徑都呼叫），新增 1 個單元測試與 1 個 Postgres smoke 情境驗證：同商家、不同訂單／金額重用同一把 key 會被拒絕、不會建立紀錄 |
+
+### 沒發現問題的部分
+
+| 項目 | 為何沒事 |
+|------|---------|
+| 標記／撤銷／列表的門市與訂單歸屬 | 一律從資料庫重新查（`getOrderStoreId`、`canManageStore`），不信任客戶端傳的 `storeId`／`orderId`，跟專案既有慣例一致 |
+| 撤銷的擁有者與 24 小時視窗 | 伺服器端用伺服器產生的時間比對 `marked_by_user_id` 與建立時間，不信任客戶端時間；另外有 DB CHECK constraint 當資料完整性防線，不是只靠應用層 |
+| 金額上限 | 在交易內對 `orders` 下 `FOR UPDATE` 鎖之後才重新加總現有生效中標記，不信任客戶端總額；已用兩個真實資料庫連線同時標記同一張訂單的併發測試證明鎖真的擋住超額，不只是語法過關 |
+| SQL injection | 新增的 repository／service／路由全是參數化查詢，沒有字串拼接 |
+| 統計查詢的跨商家／跨訂單資料外洩 | `customerSavingsRepository.js`、`merchantStatisticsRepository.js` 新增的 `merchant_refund_marks` 子查詢都正確用 `order_id` 或既有的店家篩選範圍收斂，沒有把別人的退款金額算進來 |
+| `linePayService.js` 移除 `refundLinePayPaymentAuthorized` 後的授權檢查 | 保留的 `refundLinePayPayment`／`refundLinePayPaymentUnlocked` 管理員角色檢查沒有被動到；新拿掉的函式確認沒有其他呼叫端，不是留著沒用到的提權入口 |
+| 手機端 | 新呼叫只帶既有的 bearer auth header，所有金額上限與權限檢查都當成伺服器端權威，沒有在 client bundle 加入機密或繞過邏輯 |
+
+### 還沒做、沒驗證到的部分
+
+- `adminStatisticsRepository.js`（管理員後台平台總營收）完全沒有退款扣除邏輯，這次只修了商家自己看的營收與顧客省下金額，管理員後台那塊是已知缺口，列在 `PROGRESS.md`，不在這次範圍。
+- 收費模式（抽成／訂閱）、多店各自 LINE Pay channel 的架構遷移：都還沒開始，不在這次退款功能範圍內。
+- 真實 LINE Pay sandbox 人工端對端測試：不適用——方案 B 自報退款設計本來就不呼叫金流商，沒有這一項要測。
+- 執行驗證（我自己跑的）：`npm test` 307/307（含這次新增的 1 個單元測試）；`merchant-refund-mark-postgres-smoke.js`、`customer-savings-postgres-smoke.js`、`merchant-statistics-postgres-smoke.js` 三支 Postgres smoke 全過，涵蓋標記、冪等（含這次修的跨訂單衝突）、超額、跨門市、撤銷、撤銷逾期、併發超額、顧客省下金額與商家營收的方案 B 淨額計算；瀏覽器端用真實本機後端與真實種子商家帳號（`merchant1`／`store-001`）操作過完整一輪標記→撤銷，事後查資料庫確認除了一筆 `revoked` 標記紀錄外沒有動到任何既有資料。
 ---
 
 ## 2026-10-21 — 手機登入頁依藍圖改為 Google 單一入口

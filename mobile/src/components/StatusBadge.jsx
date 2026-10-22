@@ -4,6 +4,7 @@ import {
   merchantPaymentStatusLabels,
   paymentStatusLabels,
   pickupStatusLabels,
+  refundMarkStatusLabels,
   refundRequestStatusLabels
 } from "../types/prototypeTypes";
 import { TonePill } from "./TonePill";
@@ -18,7 +19,8 @@ export function StatusBadge({ owner = "groupBuyActivity", value }) {
     merchantPayment: merchantPaymentStatusLabels,
     payment: paymentStatusLabels,
     pickup: pickupStatusLabels,
-    refundRequest: refundRequestStatusLabels
+    refundRequest: refundRequestStatusLabels,
+    refundMark: refundMarkStatusLabels
   };
   const label = labelMaps[owner]?.[value] ?? fallbackLabels[value] ?? value;
   return <TonePill tone={getStatusTone(owner, value) ?? "neutral"} label={label} />;

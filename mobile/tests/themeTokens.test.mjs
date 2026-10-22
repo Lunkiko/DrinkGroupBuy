@@ -131,6 +131,7 @@ const LABEL_MAPS = {
   merchantPayment: labels.merchantPaymentStatusLabels,
   pickup: labels.pickupStatusLabels,
   refundRequest: labels.refundRequestStatusLabels,
+  refundMark: labels.refundMarkStatusLabels,
   discount: labels.discountStatusLabels
 };
 

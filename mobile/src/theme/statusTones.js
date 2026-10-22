@@ -38,6 +38,9 @@ export const statusToneByKey = {
   "refundRequest.approved": "success",
   "refundRequest.rejected": "danger",
 
+  "refundMark.active": "success",
+  "refundMark.revoked": "neutral",
+
   "discount.not_yet_qualified": "estimate",
   "discount.qualified": "success",
   "discount.failed": "danger"
