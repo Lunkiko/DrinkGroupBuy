@@ -39,6 +39,10 @@ export function useFirebaseGoogleLogin() {
 
     if (Platform.OS === "web") {
       const provider = new GoogleAuthProvider();
+      // Without this, Google silently re-signs the person into whichever account the browser
+      // already has a live Google session for, skipping the account picker entirely -- this
+      // forces the picker to show every time, even for someone with one active Google session.
+      provider.setCustomParameters({ prompt: "select_account" });
       try {
         const credentialResult = await signInWithPopup(auth, provider);
         return toFirebaseLoginResult(credentialResult);
@@ -61,6 +65,14 @@ export function useFirebaseGoogleLogin() {
     }
 
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+    // Play Services caches the last-used Google account and silently re-selects it on the next
+    // signIn() call, skipping the account picker -- signing out of the native Google session
+    // first (not Firebase's own signOut, a separate cache) clears that so the picker always shows.
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // Nothing was cached (first-ever sign-in on this device) -- fine, proceed to signIn().
+    }
     const response = await GoogleSignin.signIn();
     if (!isSuccessResponse(response)) {
       // The person backed out of the account picker -- a deliberate, ordinary choice, not a
