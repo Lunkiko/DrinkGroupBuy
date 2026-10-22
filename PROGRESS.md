@@ -195,17 +195,17 @@ updated: 2026-10-22
     > 針對這次分支改動（不含已經單獨跑過 `/security-review` 的那部分）再跑一次程式碼品質與正確性審查。
   - 管理員審核網頁後台 [完成] (8/22) — 原本的 `AdminRefundRequestsScreen`（手機 App 裡的開發用畫面）已移除，審核功能改在獨立的 `/admin/refund-requests` 網頁後台（見下方「管理員網頁後台」）；核准／駁回直接重用既有 `approveRefundRequest`／`rejectRefundRequest` 服務層函式，未改動審核邏輯本身，這次方案 B 改動不動這個頁面，繼續處理既有的待審申請
     > 平台營運人員審核退款申請、決定核准或駁回的網頁畫面，跟顧客/商家用的手機 App 是分開的。
-- 多店各自金流帳號 [待處理]
-  > 目前全部商店共用平台的一組 LINE Pay 帳號；這塊要改成每間店各自有自己的收款帳號設定，系統依訂單所屬的店家查出對應帳號再去呼叫 LINE Pay。這次先用模擬（非真實）帳號驗證整條架構，不申請真實 LINE Pay 商家帳號，也不做商家自己管理帳號設定的畫面。
-  - 《設計》店家金流帳號資料表 [待處理]
-    > 存放每間店的收款帳號設定（哪個金流服務、帳號代碼、密鑰）。
-  - 《開發》Backend：LINE Pay 呼叫改吃店家帳號 [待處理]
-    > 付款、確認、請款、取消授權這幾個跟 LINE Pay 溝通的函式，改成先查這筆訂單屬於哪家店、用該店的帳號設定去呼叫，不再全部共用同一組寫死的設定。
-  - 《開發》模擬帳號種子資料 [待處理]
-    > 幫測試商店各自配一組模擬收款帳號，用來驗證整條邏輯跑得通，不需要真的申請 LINE Pay。
-  - 《測試》自動化測試 [待處理]
-    > 確認不同店家的訂單真的各自用到對應的模擬帳號，不會串到別家店。
-  - 《審查》/security-review [待處理]
+- 多店各自金流帳號（架構完成，帳號值待補）[進行中]
+  > 目前全部商店共用平台的一組 LINE Pay 帳號；這塊改成每間店各自有自己的收款帳號設定，系統依訂單所屬的店家查出對應帳號再去呼叫 LINE Pay。架構直接接進正式下單／付款流程，不是另外做一套展示用的假流程；這波只有一組帳號是真的能用的 LINE Pay sandbox（沿用現有設定），其餘店家先配明顯是假的占位帳號，之後申請到更多 sandbox 或正式帳號，只要換掉資料庫裡的值，不用改程式碼。
+  - 《設計》店家金流帳號資料表 [完成] (10/22) — 新表 `store_payment_accounts`（`database/migrations/012_store_payment_accounts_postgres.sql`，同步加進 `database/schema.sql`），經 `backend-architect` 角色 Skill 審查：唯一鍵是 `(store_id, provider)` 不是只有 `store_id`，讓之後同一間店要加第二組帳號（例如真的 LINE Pay、信用卡）不用改 schema。已在一次性暫時 Postgres schema 驗證：migration 套用成功
+    > 存放每間店的收款帳號設定：哪個金流服務、帳號代碼、密鑰、是否生效中。
+  - 《開發》Backend：LINE Pay 呼叫改吃店家帳號 [完成] (10/22) — `linePayClient.js` 7 個對 LINE Pay 的函式都加上選填的帳號覆寫參數，不傳就跟以前一樣讀全域設定（零破壞性）；`linePayService.js` 新增 `resolveLinePayAccountOverrides`，在請款、確認、入帳、取消授權、退款、對帳排程、截止結算這些實際會呼叫 LINE Pay 的地方，先查訂單所屬店家、拿該店的帳號再呼叫。店家還沒分配專屬帳號時，落回全域環境變數（不是當錯誤擋下來）——這是刻意設計，確保還沒分配帳號的店家（含未來新申請的店家）付款不會中斷
+    > 查訂單屬於哪家店、用該店的帳號設定去呼叫 LINE Pay 的核心邏輯；還沒配帳號的店家維持用現有共用設定，不會壞掉。
+  - 《開發》模擬帳號種子資料 [進行中] (10/22) — `scripts/seed-store-payment-accounts.js` 寫好並通過真實 Postgres smoke 驗證（預設只預覽、要加 `--apply` 才真的寫入，且對非本機資料庫會擋下來要求 `--allow-remote`）；**尚未對本機開發資料庫實際執行 `--apply`**，要執行時再確認
+    > 幫測試商店各自配一組帳號：參考店家（`store-001`，smoke test／展示在用的那家）沿用現有真的 LINE Pay sandbox 設定；其餘店家配明顯是假的占位帳號，之後申請到真帳號再替換
+  - 《測試》自動化測試 [完成] (10/22) — 單元測試 `backend/payments/linePayService.test.js`（7 項，涵蓋帳號解析各種分支、以及 `/security-review` 抓到的退款帳號解析漏洞的迴歸測試），`npm test` 314/314 全過。真實 Postgres smoke `scripts/store-payment-account-postgres-smoke.js`（`npm run store-payment-account-postgres:smoke`）證明不同店家、不同訂單各自查到自己的帳號，不會串到別家店；既有付款相關 smoke test（`payment-authorization-request`／`confirm`／`cancel`、`group-buy-settlement-postgres`、`merchant-refund-mark-postgres`、`payment-refund-postgres`）全部重跑過，沒有壞掉
+    > 確認不同店家的訂單真的各自用到對應的帳號，不會串到別家店。
+  - 《審查》/security-review [完成] (10/22) — 抓到 1 個中風險問題並已修：退款流程（`executeLinePayRefund`）如果用 `captureId` 而不是 `orderId` 指定要退哪筆款，原本的帳號解析會直接讀沒驗證過的 `body.orderId`，兩者如果指向不同店家，退款會用錯店家的 LINE Pay 憑證呼叫；已改成用資料庫查出來、跟實際請款紀錄綁定的訂單 ID，並新增迴歸測試。詳細記錄見 `docs/AI-security-review-log.md` 2026-10-22「多店各自 LINE Pay 收款帳號」那筆
     > 金流相關改動，依專案規則完成後要跑一次安全審查並寫進 `docs/AI-security-review-log.md`。
 
 ## 訂單流程 [進行中]

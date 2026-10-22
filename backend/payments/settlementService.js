@@ -62,7 +62,8 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
     now,
     settlementRepository,
     paymentCaptureRepository,
-    authorizationCancelRepository
+    authorizationCancelRepository,
+    storePaymentAccountRepository
   } = input;
   const planInput = { activityId, actorUserId, force, now };
   const plan = settlementRepository
@@ -142,7 +143,8 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
             orderId: order.id,
             transactionId: order.providerTransactionId,
             provider: order.paymentProvider,
-            paymentCaptureRepository
+            paymentCaptureRepository,
+            storePaymentAccountRepository
           });
           if (providerState.state === "captured") {
             const reconciliationInput = {
@@ -209,7 +211,8 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
           amount: order.captureAmount,
           finalAmount: order.finalAmount,
           reason: `deadline_settlement_${order.actionReason}`,
-          paymentCaptureRepository
+          paymentCaptureRepository,
+          storePaymentAccountRepository
         });
 
         results.push({
@@ -226,7 +229,8 @@ async function settleGroupBuyActivityUnlocked(input = {}) {
         transactionId: order.providerTransactionId,
         provider: order.paymentProvider,
         reason: `deadline_settlement_${order.actionReason}`,
-        authorizationCancelRepository
+        authorizationCancelRepository,
+        storePaymentAccountRepository
       });
 
       results.push({
@@ -535,6 +539,7 @@ async function runDueGroupBuySettlementJobs(input = {}) {
         settlementRepository: input.settlementRepository,
         paymentCaptureRepository: input.paymentCaptureRepository,
         authorizationCancelRepository: input.authorizationCancelRepository,
+        storePaymentAccountRepository: input.storePaymentAccountRepository,
         pushTokenRepository: input.pushTokenRepository,
         logger: input.logger
       });
@@ -611,6 +616,7 @@ function startDeadlineSettlementScheduler(input = {}) {
         settlementRepository: input.settlementRepository,
         paymentCaptureRepository: input.paymentCaptureRepository,
         authorizationCancelRepository: input.authorizationCancelRepository,
+        storePaymentAccountRepository: input.storePaymentAccountRepository,
         pushTokenRepository: input.pushTokenRepository,
         logger
       });

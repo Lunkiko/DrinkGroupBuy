@@ -16,7 +16,11 @@ const {
   checkLinePayPaymentRequestStatus,
   retrieveLinePayPaymentDetails
 } = require("./linePayClient");
-const { confirmLinePayAuthorization, inferLinePayPaymentState } = require("./linePayService");
+const {
+  confirmLinePayAuthorization,
+  inferLinePayPaymentState,
+  resolveLinePayAccountOverrides
+} = require("./linePayService");
 const { sendPaymentReliabilityJobAlert, sendSchedulerFailureAlert } = require("./alertNotifier");
 
 const RECONCILIATION_JOB_TYPE = "reconcile_line_pay_request";
@@ -64,7 +68,8 @@ async function runLinePayReconciliationJobs(input = {}) {
     reliabilityJobRepository: input.reliabilityJobRepository,
     authorizationConfirmRepository: input.authorizationConfirmRepository,
     authorizationCancelRepository: input.authorizationCancelRepository,
-    manualRepaymentRepository: input.manualRepaymentRepository
+    manualRepaymentRepository: input.manualRepaymentRepository,
+    storePaymentAccountRepository: input.storePaymentAccountRepository
   };
   const now = input.now || new Date().toISOString();
   const workerId = input.workerId || `line-pay-reconcile-${process.pid}-${randomUUID()}`;
@@ -152,7 +157,12 @@ async function reconcileLinePayRequestJob(job, dependencies) {
   }
 
   const transactionId = context.authorization.providerAuthorizationId;
-  const statusPayload = await dependencies.checker(transactionId);
+  const reconciliationAccountOverrides = await resolveLinePayAccountOverrides({
+    orderId: context.authorization.orderId,
+    provider: "line_pay",
+    storePaymentAccountRepository: repositories.storePaymentAccountRepository
+  });
+  const statusPayload = await dependencies.checker(transactionId, reconciliationAccountOverrides);
   const returnCode = String(statusPayload?.returnCode || "");
   if (returnCode === "0000") {
     return {
@@ -167,7 +177,8 @@ async function reconcileLinePayRequestJob(job, dependencies) {
       orderId: context.authorization.orderId,
       authorizationConfirmRepository: repositories.authorizationConfirmRepository,
       authorizationCancelRepository: repositories.authorizationCancelRepository,
-      manualRepaymentRepository: repositories.manualRepaymentRepository
+      manualRepaymentRepository: repositories.manualRepaymentRepository,
+      storePaymentAccountRepository: repositories.storePaymentAccountRepository
     });
     return { outcome: "complete", status: "confirmed", result };
   }
@@ -185,7 +196,7 @@ async function reconcileLinePayRequestJob(job, dependencies) {
     return { outcome: "complete", status: failed?.status || "failed", returnCode };
   }
   if (returnCode === "0123") {
-    const details = await dependencies.detailsRetriever(transactionId);
+    const details = await dependencies.detailsRetriever(transactionId, reconciliationAccountOverrides);
     return reconcileCompletedPayment(context, transactionId, details, repositories);
   }
 
@@ -285,7 +296,8 @@ function startLinePayReconciliationScheduler(input = {}) {
         reliabilityJobRepository: input.reliabilityJobRepository,
         authorizationConfirmRepository: input.authorizationConfirmRepository,
         authorizationCancelRepository: input.authorizationCancelRepository,
-        manualRepaymentRepository: input.manualRepaymentRepository
+        manualRepaymentRepository: input.manualRepaymentRepository,
+        storePaymentAccountRepository: input.storePaymentAccountRepository
       });
       logAlertRequiredJobs(summary.results, logger, "line_pay_reconciliation");
       return summary;

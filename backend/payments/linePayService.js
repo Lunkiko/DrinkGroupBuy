@@ -56,6 +56,21 @@ class PaymentServiceError extends Error {
   }
 }
 
+// Multi-channel LINE Pay accounts (2026-10-22): resolves the credentials a real ("line_pay",
+// non-mock) provider call should use for this order's store. Falls back to {} (meaning
+// linePayClient.js's getLinePayConfig keeps reading the global LINE_PAY_CHANNEL_ID/SECRET env
+// vars) whenever `storePaymentAccountRepository` isn't injected, the provider isn't "line_pay",
+// or the store has no account row yet -- every existing and future store keeps working on the
+// shared account until it's explicitly given its own, see storePaymentAccountRepository.js.
+async function resolveLinePayAccountOverrides({ orderId, provider, storePaymentAccountRepository }) {
+  if (provider !== "line_pay" || !storePaymentAccountRepository || !orderId) return {};
+  const storeId = await storePaymentAccountRepository.getOrderStoreId({ orderId });
+  if (!storeId) return {};
+  const account = await storePaymentAccountRepository.getActiveAccountForStore({ storeId, provider: "line_pay" });
+  if (!account) return {};
+  return { channelId: account.channelId, channelSecret: account.channelSecret };
+}
+
 function createMockLinePayPayload(returnMessage, transactionId, orderId) {
   return {
     returnCode: "0000",
@@ -103,7 +118,7 @@ function classifyLinePayCaptureError(error) {
 }
 
 async function getLinePayCaptureProviderState({
-  transactionId, orderId, provider = "line_pay", paymentCaptureRepository
+  transactionId, orderId, provider = "line_pay", paymentCaptureRepository, storePaymentAccountRepository
 }) {
   const contextInput = {
     orderId,
@@ -125,7 +140,8 @@ async function getLinePayCaptureProviderState({
   }
 
   try {
-    const payload = await retrieveLinePayPaymentDetails(transactionId);
+    const accountOverrides = await resolveLinePayAccountOverrides({ orderId, provider, storePaymentAccountRepository });
+    const payload = await retrieveLinePayPaymentDetails(transactionId, accountOverrides);
     return {
       state: inferLinePayPaymentState(payload),
       payload
@@ -262,6 +278,7 @@ async function requestLinePayAuthorizationUnlocked({
   authorizationCancelRepository,
   orderRevisionRepository,
   reliabilityJobRepository,
+  storePaymentAccountRepository,
   requestPayment = requestLinePayPayment
 }) {
   const revision = body.orderRevisionId
@@ -395,7 +412,10 @@ async function requestLinePayAuthorizationUnlocked({
     });
   }
 
-  const payload = await requestPayment(body);
+  const accountOverrides = await resolveLinePayAccountOverrides({
+    orderId: body.orderId, provider: "line_pay", storePaymentAccountRepository
+  });
+  const payload = await requestPayment(body, accountOverrides);
   const info = payload.info || {};
   const transactionId = info.transactionId ? String(info.transactionId) : null;
   const authorizationInput = {
@@ -492,7 +512,8 @@ async function requestManualLinePayRepaymentUnlocked({
   paymentCaptureRepository,
   authorizationCancelRepository,
   authorizationRequestRepository,
-  reliabilityJobRepository
+  reliabilityJobRepository,
+  storePaymentAccountRepository
 } = {}) {
   if (!body?.orderId) {
     throw new PaymentServiceError(400, { error: "Missing required field: orderId" });
@@ -537,7 +558,8 @@ async function requestManualLinePayRepaymentUnlocked({
     const providerState = await getLinePayCaptureProviderState({
       orderId: repayment.orderId,
       transactionId: originalAuthorization.providerAuthorizationId,
-      provider: originalAuthorization.provider
+      provider: originalAuthorization.provider,
+      storePaymentAccountRepository
     });
     if (providerState.state === "captured") {
       const captureInput = {
@@ -575,6 +597,7 @@ async function requestManualLinePayRepaymentUnlocked({
           provider: originalAuthorization.provider,
           reason: "manual_repayment_release_original_authorization",
           authorizationCancelRepository,
+          storePaymentAccountRepository,
           // requestManualLinePayRepaymentUnlocked already runs inside the same
           // order:{orderId}:payment-lifecycle lock (see requestManualLinePayRepayment above) --
           // without this, voidLinePayAuthorization tries to reacquire that lock and always fails
@@ -592,6 +615,9 @@ async function requestManualLinePayRepaymentUnlocked({
     }
 
     const providerOrderId = `repay-${repayment.orderId}-${randomUUID()}`.slice(0, 100);
+    const repaymentAccountOverrides = await resolveLinePayAccountOverrides({
+      orderId: repayment.orderId, provider: "line_pay", storePaymentAccountRepository
+    });
     const payload = await requestLinePayPayment({
       orderId: repayment.orderId,
       providerOrderId,
@@ -605,7 +631,7 @@ async function requestManualLinePayRepaymentUnlocked({
         price: repayment.finalAmount
       }],
       captureSeparated: false
-    });
+    }, repaymentAccountOverrides);
     const info = payload.info || {};
     const transactionId = info.transactionId ? String(info.transactionId) : null;
     if (!transactionId) {
@@ -725,6 +751,7 @@ async function confirmLinePayAuthorizationUnlocked({
   authorizationConfirmRepository,
   authorizationCancelRepository,
   manualRepaymentRepository,
+  storePaymentAccountRepository,
   providerConfirmer,
   providerVoider
 }) {
@@ -804,7 +831,10 @@ async function confirmLinePayAuthorizationUnlocked({
       };
     }
 
-    const payload = await confirmLinePayPayment(transactionId, { amount, currency });
+    const directRepaymentOverrides = await resolveLinePayAccountOverrides({
+      orderId: resolvedOrderId, provider: "line_pay", storePaymentAccountRepository
+    });
+    const payload = await confirmLinePayPayment(transactionId, { amount, currency }, directRepaymentOverrides);
     const repaymentResult = manualRepaymentRepository
       ? await manualRepaymentRepository.completeRepayment({
           orderId: resolvedOrderId,
@@ -848,10 +878,13 @@ async function confirmLinePayAuthorizationUnlocked({
   }
 
   const confirmProviderPayment = providerConfirmer || confirmLinePayPayment;
+  const confirmAccountOverrides = await resolveLinePayAccountOverrides({
+    orderId: resolvedOrderId, provider: "line_pay", storePaymentAccountRepository
+  });
   const payload = await confirmProviderPayment(transactionId, {
     amount,
     currency
-  });
+  }, confirmAccountOverrides);
   const confirmationInput = {
     orderId: resolvedOrderId,
     orderRevisionId: resolvedOrderRevisionId,
@@ -888,7 +921,8 @@ async function confirmLinePayAuthorizationUnlocked({
       orderId: resolvedOrderId,
       transactionId,
       baseReason: authorizationResult.error,
-      providerVoider
+      providerVoider,
+      storePaymentAccountRepository
     });
 
     return {
@@ -912,7 +946,8 @@ async function confirmLinePayAuthorizationUnlocked({
   const replacementVoidResult = await voidReplacedAuthorizationIfNeeded({
     authorizationResult,
     orderId: resolvedOrderId,
-    authorizationCancelRepository
+    authorizationCancelRepository,
+    storePaymentAccountRepository
   });
 
   return {
@@ -928,7 +963,8 @@ async function compensateRejectedAuthorization({
   orderId,
   transactionId,
   baseReason,
-  providerVoider
+  providerVoider,
+  storePaymentAccountRepository
 }) {
   try {
     const voidResult = authorizationConfirmRepository?.kind === "postgres"
@@ -937,12 +973,14 @@ async function compensateRejectedAuthorization({
           orderId,
           transactionId,
           reason: `${baseReason}_at_confirm`,
-          providerVoider
+          providerVoider,
+          storePaymentAccountRepository
         })
       : await voidLinePayAuthorization({
           orderId,
           transactionId,
-          reason: `${baseReason}_at_confirm`
+          reason: `${baseReason}_at_confirm`,
+          storePaymentAccountRepository
         });
     return { voidResult, voidError: null };
   } catch (error) {
@@ -976,10 +1014,14 @@ async function compensateRejectedPostgresAuthorization({
   orderId,
   transactionId,
   reason,
-  providerVoider
+  providerVoider,
+  storePaymentAccountRepository
 }) {
   const voidProviderPayment = providerVoider || voidLinePayPaymentAuthorization;
-  const payload = await voidProviderPayment(transactionId);
+  const accountOverrides = await resolveLinePayAccountOverrides({
+    orderId, provider: "line_pay", storePaymentAccountRepository
+  });
+  const payload = await voidProviderPayment(transactionId, accountOverrides);
   const authorization = await repository.recordCompensatingVoidSuccess({
     orderId,
     providerTransactionId: transactionId,
@@ -992,7 +1034,8 @@ async function compensateRejectedPostgresAuthorization({
 async function voidReplacedAuthorizationIfNeeded({
   authorizationResult,
   orderId,
-  authorizationCancelRepository
+  authorizationCancelRepository,
+  storePaymentAccountRepository
 }) {
   const replacedAuthorization = authorizationResult?.replacedAuthorization;
   if (!replacedAuthorization || replacedAuthorization.status !== "authorized") {
@@ -1005,7 +1048,8 @@ async function voidReplacedAuthorizationIfNeeded({
       transactionId: replacedAuthorization.providerAuthorizationId,
       provider: replacedAuthorization.provider,
       reason: "order_revision_replaced_authorization",
-      authorizationCancelRepository
+      authorizationCancelRepository,
+      storePaymentAccountRepository
     });
   } catch (error) {
     try {
@@ -1064,6 +1108,7 @@ async function captureLinePayAuthorizationUnlocked({
   currency,
   reason = "line_pay_capture",
   paymentCaptureRepository,
+  storePaymentAccountRepository,
   providerCapturer
 }) {
   const contextInput = {
@@ -1130,12 +1175,15 @@ async function captureLinePayAuthorizationUnlocked({
   let payload;
   try {
     const captureProviderPayment = providerCapturer || captureLinePayPaymentAuthorization;
+    const accountOverrides = await resolveLinePayAccountOverrides({
+      orderId: authorization.orderId, provider, storePaymentAccountRepository
+    });
     payload = provider === "mock_line_pay"
       ? createMockLinePayPayload("mock_capture", resolvedTransactionId, authorization.orderId)
       : await captureProviderPayment(resolvedTransactionId, {
           amount: captureAmount,
           currency: resolvedCurrency
-        });
+        }, accountOverrides);
   } catch (error) {
     const classification = classifyLinePayCaptureError(error);
     let captureFailure = null;
@@ -1220,7 +1268,9 @@ async function refundLinePayPaymentUnlocked(input = {}) {
   return executeLinePayRefund(input);
 }
 
-async function executeLinePayRefund({ authUser, body, paymentRefundRepository } = {}) {
+async function executeLinePayRefund({
+  authUser, body, paymentRefundRepository, storePaymentAccountRepository, providerRefunder
+} = {}) {
   if (!body?.orderId && !body?.captureId && !body?.providerTransactionId) {
     throw new PaymentServiceError(400, {
       error: "Missing required field: orderId, captureId, or providerTransactionId"
@@ -1291,11 +1341,19 @@ async function executeLinePayRefund({ authUser, body, paymentRefundRepository } 
 
   let payload;
   try {
+    // orderId comes from pendingRefund.order.id (resolved from the actual capture row by
+    // findRefundablePaymentCapturePostgres), never from body.orderId directly -- the request body
+    // can key the refund by captureId or providerTransactionId instead, in which case body.orderId
+    // is unvalidated and may name a different order/store than the capture actually being refunded.
+    const accountOverrides = await resolveLinePayAccountOverrides({
+      orderId: pendingRefund.order?.id, provider, storePaymentAccountRepository
+    });
+    const refundProviderPayment = providerRefunder || refundLinePayPaymentTransaction;
     payload = provider === "mock_line_pay"
       ? createMockLinePayRefundPayload(transactionId, pendingRefund.refund.refundAmount)
-      : await refundLinePayPaymentTransaction(transactionId, {
+      : await refundProviderPayment(transactionId, {
           refundAmount: pendingRefund.refund.refundAmount
-        });
+        }, accountOverrides);
   } catch (error) {
     const failInput = {
       refundId: pendingRefund.refund.id,
@@ -1405,6 +1463,7 @@ async function voidLinePayAuthorizationUnlocked({
   provider = "line_pay",
   reason = "line_pay_void_authorization",
   authorizationCancelRepository,
+  storePaymentAccountRepository,
   providerVoider
 }) {
   const contextInput = {
@@ -1455,9 +1514,12 @@ async function voidLinePayAuthorizationUnlocked({
   let payload;
   try {
     const voidProviderPayment = providerVoider || voidLinePayPaymentAuthorization;
+    const accountOverrides = await resolveLinePayAccountOverrides({
+      orderId: authorization.orderId, provider, storePaymentAccountRepository
+    });
     payload = provider === "mock_line_pay"
       ? createMockLinePayPayload("mock_void", resolvedTransactionId, authorization.orderId)
-      : await voidProviderPayment(resolvedTransactionId);
+      : await voidProviderPayment(resolvedTransactionId, accountOverrides);
   } catch (error) {
     const failureInput = {
       orderId: authorization.orderId,
@@ -1596,5 +1658,6 @@ module.exports = {
   requestManualLinePayRepayment,
   requestLinePayAuthorization,
   refundLinePayPayment,
+  resolveLinePayAccountOverrides,
   voidLinePayAuthorization
 };

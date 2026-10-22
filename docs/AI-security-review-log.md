@@ -1787,3 +1787,32 @@
 ### 驗證與限制
 
 `node --test "mobile/tests/*.test.mjs"`：80/80 通過；375px 離線預覽實際點過「購物車 → 確認付款 → LINE Pay（展示模式）→ 訂單明細」。正式 LINE Pay 授權、Android 返回深層連結及真實付款時序未在離線展示中驗證，需由擁有者在整合環境審核。
+
+---
+
+## 2026-10-22 — 多店各自 LINE Pay 收款帳號（模擬帳號架構），金流改動
+
+**範圍**：`backend/database/repositories/storePaymentAccountRepository.js`（新檔）、`backend/payments/linePayClient.js`、`backend/payments/linePayService.js`、`backend/payments/reliabilityService.js`、`backend/payments/settlementService.js`、`backend/server.js`、`database/migrations/012_store_payment_accounts_postgres.sql`、`scripts/seed-store-payment-accounts.js`。
+**觸發原因**：`AGENTS.md` 規定金流改動完成後要複查並記錄；這次把「全部店家共用一組 LINE Pay 帳號」改成「每間店各自查出自己的帳號設定再呼叫」，觸及所有付款生命週期呼叫點（請款、確認、請款入帳、取消授權、退款、對帳排程、截止結算）。
+
+**方法**：獨立審查者（subagent）讀完整 diff 與現有程式碼，針對新查詢的 SQL injection、帳號解析是否可能讓某張訂單用到別家店的憑證、`storePaymentAccountRepository.js` 的查無帳號 fallback 行為、以及 seed script 有沒有外洩密鑰等面向逐一檢查；我自己覆核並驗證抓到的問題。
+
+### 發現
+
+| 嚴重度 | 位置 | 問題 | 建議修法 | 狀態 |
+|--------|------|------|----------|------|
+| 中 | `backend/payments/linePayService.js`（`executeLinePayRefund`） | 退款這個呼叫點的帳號解析（`resolveLinePayAccountOverrides`）原本直接吃 `body.orderId`，但請求可以改用 `captureId`／`providerTransactionId` 指定要退的款，這種情況下 `body.orderId` 完全不會被拿去找對應的請款紀錄，等於沒驗證就被拿去查帳號——如果兩者指向不同店家的訂單，退款會用錯店家的 LINE Pay 憑證去呼叫。其餘所有呼叫點（請款、確認、入帳、取消授權、對帳、結算）的 `orderId` 都是從資料庫查出來的、已經跟實際交易綁定的值，只有這一處是例外。 | 改成用 `pendingRefund.order.id`（`createPendingRefund` 依實際解析出的請款紀錄回傳的訂單，不是原始請求欄位）。 | 已修，新增單元測試驗證（`captureId` 指向的店家與 `body.orderId` 指向的店家不同時，必須用前者） |
+
+### 沒發現問題的部分
+
+| 面向 | 檢查結果 |
+|------|----------|
+| SQL injection | `storePaymentAccountRepository.js` 三個新查詢（`getOrderStoreId`、`getActiveAccountForStore`、`upsertAccount`）全部參數化（`$1`/`$2`...），沒有字串拼接。 |
+| 其餘呼叫點的越權風險 | 逐一追過 `requestLinePayAuthorizationUnlocked`、`requestManualLinePayRepaymentUnlocked`、`confirmLinePayAuthorizationUnlocked`、`captureLinePayAuthorizationUnlocked`、`voidLinePayAuthorizationUnlocked`、對帳排程、結算排程：`orderId` 要嘛在使用前已驗證屬於當下登入的 `authUser`，要嘛是從「同時用 orderId 與 providerTransactionId 查詢」的資料庫結果取得，查無吻合紀錄就直接短路、不會往下呼叫 provider。 |
+| 查無帳號的 fallback | 確認回傳 `{}`（落回全域環境變數）是刻意設計，不是意外洩漏到錯的店家——多數店家在這波還沒分配專屬帳號，必須維持能用。 |
+| seed script 外洩密鑰 | `scripts/seed-store-payment-accounts.js` 只印出假帳號的 `channelId`（明顯是假的字串）；唯一的真帳號只印「沿用現有環境變數」這行文字，不印真正的值；店家 ID 全部寫死在腳本裡，不接受不可信輸入。 |
+| 機密存放 | `channel_secret` 這次明碼存放在新表裡；這是本回合「先用模擬帳號」刻意接受的取捨（migration 檔案註解已寫明），之後接真帳號要考慮加密或 secret manager，不是直接沿用。 |
+
+### 驗證
+
+`npm test` 314/314（含這次新增、驗證該修復的 7 項單元測試）；`store-payment-account-postgres:smoke`、`payment-refund-postgres:smoke`、`payment-authorization-request:smoke`、`payment-authorization-confirm:smoke`、`payment-authorization-cancel:smoke`、`group-buy-settlement-postgres:smoke`、`merchant-refund-mark-postgres:smoke` 全過。
