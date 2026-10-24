@@ -100,6 +100,9 @@ export function NearbyGroupBuyActivitiesScreen({ navigation, appState, actions, 
       .map((order) => order.groupBuyActivityId)
   );
   const activeGroupBuyActivity = groupBuyActivities.find((groupBuyActivity) => joinedGroupBuyActivityIds.has(groupBuyActivity.id) && isOngoingJoinedGroupBuyActivity(groupBuyActivity)) ?? null;
+  const activeOrder = activeGroupBuyActivity
+    ? orders.find((order) => order.customerId === selectedCustomerId && order.groupBuyActivityId === activeGroupBuyActivity.id && isActiveJoinedOrder(order))
+    : null;
   const activeStore = getGroupBuyActivityStore(activeGroupBuyActivity);
   const activeProgress = activeGroupBuyActivity ? getGroupBuyActivityProgress(activeGroupBuyActivity) : null;
   const activeDiscount = activeGroupBuyActivity ? getGroupBuyActivityDiscountInfo(activeGroupBuyActivity) : null;
@@ -130,7 +133,7 @@ export function NearbyGroupBuyActivitiesScreen({ navigation, appState, actions, 
           {activeGroupBuyActivity ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => navigation.push("groupProgress", { groupBuyActivityId: activeGroupBuyActivity.id })}
+              onPress={() => navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: activeOrder.id, historical: false } })}
               style={styles.manageLink}
             >
               <Text style={styles.manageLinkText}>查看進度 ›</Text>

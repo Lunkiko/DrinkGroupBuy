@@ -104,7 +104,13 @@ export function OrderProgressCard({ activity, progress, stage }) {
           <View style={styles.divider} />
         </>
       ) : null}
-      <View style={styles.iconTextRow}><View style={styles.smallIconBadge}><OrderDetailIcon name="calendar" size={20} /></View><Text style={styles.pickupTime}>{stage === 2 ? "取餐時間" : "預計取餐"}  {activity.pickupTime ?? "時間待確認"}</Text></View>
+      <View style={styles.pickupTimeRow}>
+        <View style={styles.smallIconBadge}><OrderDetailIcon name="calendar" size={20} /></View>
+        <View style={styles.pickupTimeContent}>
+          <Text style={styles.pickupTimeLabel}>{stage === 2 ? "取餐時間" : "預計取餐"}</Text>
+          <Text style={styles.pickupTime}>{activity.pickupTime ?? "時間待確認"}</Text>
+        </View>
+      </View>
       {stage <= 1 ? <Text style={styles.meta}>店家備妥飲品後，將在此顯示取餐代碼。</Text> : null}
     </Card>
   );
@@ -148,9 +154,12 @@ const makeStyles = (colors) => StyleSheet.create({
   progressFill: { height: 10, borderRadius: radii.pill, backgroundColor: colors.accent },
   divider: { height: 1, backgroundColor: colors.lineRow },
   iconTextRow: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
-  smallIconBadge: { width: 32, height: 32, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.recess },
+  pickupTimeRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.s12 },
+  smallIconBadge: { width: 32, height: 32, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.recess, flexShrink: 0 },
+  pickupTimeContent: { flex: 1, minWidth: 0 },
+  pickupTimeLabel: { ...typeScale.bodyDense, color: colors.textSecondary },
   meta: { ...typeScale.bodyDense, color: colors.textSecondary },
   keyValue: { flexDirection: "row", justifyContent: "space-between", gap: spacing.s12 },
   keyValueText: { ...typeScale.sectionTitle, color: colors.text },
-  pickupTime: { ...typeScale.body, color: colors.accentInk }
+  pickupTime: { ...typeScale.body, color: colors.accentInk, flexShrink: 1 }
 });

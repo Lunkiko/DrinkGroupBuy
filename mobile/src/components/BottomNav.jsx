@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StackActions } from "@react-navigation/native";
 import { maxFontSizeMultiplier, sizes, spacing, typeScale } from "../theme/tokens";
 import { useThemedStyles } from "../theme/ThemeContext";
 
@@ -25,12 +26,16 @@ const TAB_INFO = {
 export function BottomNav({ state, navigation }) {
   const styles = useThemedStyles(makeStyles);
 
-  // Emitting tabPress lets the tab's own native-stack pop back to its root when the already-active tab
-  // is tapped again (native-stack listens for it); tapping a different tab just switches to it and
-  // keeps that tab's history.
+  // Re-enter a customer tab at its first screen, even when its nested stack was left on a detail page.
+  // Tapping the active tab still uses React Navigation's built-in tabPress pop-to-top behavior.
   const handleTabPress = (route, active) => {
     const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
-    if (!active && !event.defaultPrevented) navigation.navigate(route.name);
+    if (!active && !event.defaultPrevented) {
+      if (["HomeTab", "LiveMapTab", "OrdersTab", "ProfileTab"].includes(route.name) && route.state?.index > 0) {
+        navigation.dispatch({ ...StackActions.popToTop(), target: route.state.key });
+      }
+      navigation.navigate(route.name);
+    }
   };
 
   return (
