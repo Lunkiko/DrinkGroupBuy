@@ -5,6 +5,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { ActivityFilterPanel } from "../components/ActivityFilterPanel";
 import { Card } from "../components/Card";
+import { MapCupPin, MapFilterGlyph, MapStoreProgress, MapUserLocationDot } from "../components/MapOverlayParts";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useActivityMapFilters } from "../hooks/useActivityMapFilters";
 import { useDevLocationConfig } from "../hooks/useDevLocationConfig";
@@ -14,15 +15,6 @@ import { reportAppliedDevLocation } from "../utils/devLocationControl";
 import { buildStoreMapStores, getStoreMapDestination, getStoreMarkerLabel } from "../utils/groupBuyActivityStores";
 import { useTheme, useThemedStyles } from "../theme/ThemeContext";
 import { DARK_MAP_STYLE, LIGHT_MAP_STYLE } from "../theme/mapStyles";
-
-// Android turns pinColor into a hue only (react-native-maps: Color.colorToHSV -> defaultMarker(hue)),
-// so these are each just the hue of the named colour, not an exact match to it. Fixed values per
-// explicit user decision, not theme tokens like colors.accent/colors.text (which these used to be)
-// -- they need to read the same in light and dark mode. The recruiting/no-recruiting difference is
-// always also drawn on the label under the pin (solid vs hollow dot), so pin colour was already a
-// secondary signal, free to pick for contrast rather than theme consistency.
-const RECRUITING_PIN_COLOR = "yellow";
-const IDLE_PIN_COLOR = "cyan";
 
 export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
   const styles = useThemedStyles(makeStyles);
@@ -246,24 +238,31 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
         toolbarEnabled={false}
         mapType="standard"
         customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
+        onPress={(event) => {
+          if (event?.nativeEvent?.action && event.nativeEvent.action !== "press") return;
+          setSelectedStoreId(null);
+          setFilteredOutStoreName(null);
+        }}
         onMapReady={recomputeMarkerLabelPositions}
         onRegionChangeStart={hideLabelsWhileMoving}
         onRegionChange={hideLabelsWhileMoving}
         onRegionChangeComplete={showLabelsAtSettledPositions}
       >
-        {/* No pinColor: omitting it gives Android's own default marker (Google's native red) --
-            passing a red hex through the hue-only conversion above is a less direct way to ask
-            for the same thing. */}
         <Marker
+          key={`user-location-${isDark ? "dark" : "light"}`}
           coordinate={userPosition}
           title={locationName}
           description={effectiveLocationMode === "live" ? "顧客即時 GPS；失敗時使用固定備援位置" : "控制台指定的顧客固定位置"}
-        />
+          anchor={{ x: 0.5, y: 0.5 }}
+          tracksViewChanges={false}
+        >
+          <MapUserLocationDot />
+        </Marker>
         {visibleMapStores.map((store) => {
           const hasRecruitingGroupBuyActivity = store.hasRecruitingGroupBuyActivity;
-          return (
+          return hasRecruitingGroupBuyActivity ? (
             <Marker
-              key={store.id}
+              key={`${store.id}-${isDark ? "dark" : "light"}-${selectedStoreId === store.id ? "selected" : "idle"}`}
               coordinate={{ latitude: store.latitude, longitude: store.longitude }}
               title={getStoreMarkerLabel(store)}
               description={hasRecruitingGroupBuyActivity ? "有招募中的團購" : "目前沒有招募中團購"}
@@ -271,9 +270,13 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
                 setFilteredOutStoreName(null);
                 setSelectedStoreId(store.id);
               }}
-              pinColor={hasRecruitingGroupBuyActivity ? RECRUITING_PIN_COLOR : IDLE_PIN_COLOR}
-            />
-          );
+              anchor={{ x: 0.5, y: 1 }}
+              stopPropagation
+              tracksViewChanges={false}
+            >
+              <MapCupPin selected={selectedStoreId === store.id} />
+            </Marker>
+          ) : null;
         })}
       </MapView>
 
@@ -283,13 +286,26 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
         return (
           <View
             key={`label-${store.id}`}
-            pointerEvents="none"
-            style={[styles.markerLabel, { left: point.x, top: point.y + 4 }]}
+            pointerEvents="box-none"
+            style={[styles.markerLabel, {
+              left: point.x,
+              top: store.hasRecruitingGroupBuyActivity
+                ? point.y + 4
+                : point.y - typeScale.label.lineHeight / 2 - spacing.s4
+            }]}
           >
-            <View style={styles.markerLabelPill}>
-              <View style={[styles.markerDot, store.hasRecruitingGroupBuyActivity && styles.markerDotSolid]} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`查看${store.name}`}
+              onPress={() => {
+                setFilteredOutStoreName(null);
+                setSelectedStoreId(store.id);
+              }}
+              style={styles.markerLabelPill}
+            >
+              <View style={[styles.markerDot, store.hasRecruitingGroupBuyActivity ? styles.markerDotActive : styles.markerDotIdle]} />
               <Text maxFontSizeMultiplier={maxFontSizeMultiplier} numberOfLines={1} style={styles.markerLabelText}>{store.name}</Text>
-            </View>
+            </Pressable>
           </View>
         );
       })}
@@ -303,6 +319,7 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
             onPress={openFilterPanel}
             style={({ pressed }) => [styles.filterButton, pressed && styles.pressed]}
           >
+            <MapFilterGlyph />
             <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.filterButtonText}>篩選</Text>
           </Pressable>
 
@@ -343,9 +360,8 @@ export function LiveMapScreen({ navigation, appState, selectedAuthUserId }) {
           <Card compact style={styles.storeCard}>
             <View style={styles.storeInfo}>
               <Text style={styles.storeName}>{selectedStore.name}</Text>
-              <Text style={styles.storeMeta} numberOfLines={2}>
-                {selectedStore.address || "地址未提供"} · {selectedStore.hasRecruitingGroupBuyActivity ? `招募中的團購 ${selectedStore.progressText}` : "目前沒有招募中團購"}
-              </Text>
+              <Text style={styles.storeMeta} numberOfLines={1}>{selectedStore.address || "地址未提供"}</Text>
+              <MapStoreProgress active={selectedStore.hasRecruitingGroupBuyActivity} progressText={selectedStore.progressText} />
             </View>
             <PrimaryButton
               label={selectedStore.joinableGroupBuyActivities.length > 1
@@ -396,8 +412,8 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   markerLabel: {
     position: "absolute",
-    width: 148,
-    marginLeft: -74,
+    width: 220,
+    marginLeft: -110,
     alignItems: "center"
   },
   markerLabelPill: {
@@ -405,7 +421,7 @@ const makeStyles = (colors) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.s4,
-    borderRadius: radii.xs,
+    borderRadius: radii.pill,
     backgroundColor: colors.page,
     paddingHorizontal: spacing.s8,
     paddingVertical: spacing.s4
@@ -415,18 +431,16 @@ const makeStyles = (colors) => StyleSheet.create({
     ...typeScale.label,
     color: colors.text
   },
-  // Solid = the store has a group to join, hollow = it has none (the web markers use the same idea).
+  // The yellow fill matches the activity progress bar; the label text supplies the status context.
   markerDot: {
     width: spacing.s12,
     height: spacing.s12,
     borderRadius: radii.pill,
     borderWidth: sizes.stroke,
-    borderColor: colors.accent,
     backgroundColor: colors.page
   },
-  markerDotSolid: {
-    backgroundColor: colors.accent
-  },
+  markerDotActive: { borderColor: colors.progress, backgroundColor: colors.progress },
+  markerDotIdle: { borderColor: colors.textSecondary },
   // Bottom offset keeps the map's attribution strip visible under the controls and the cards.
   overlay: {
     position: "absolute",
@@ -446,6 +460,8 @@ const makeStyles = (colors) => StyleSheet.create({
   filterButton: {
     minWidth: sizes.tap,
     minHeight: sizes.tap,
+    flexDirection: "row",
+    gap: spacing.s8,
     borderRadius: radii.pill,
     borderWidth: sizes.stroke,
     borderColor: colors.accent,
@@ -535,6 +551,7 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   storeInfo: {
     flex: 1,
+    minWidth: 0,
     gap: spacing.s4
   },
   storeName: {

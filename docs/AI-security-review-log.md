@@ -8,6 +8,23 @@
 
 ---
 
+## 2026-10-25 — 登入頁法律草案與展示付款規則文案
+
+**範圍**：`mobile/src/screens/RoleSelectScreen.jsx`、`mobile/src/components/LegalInfoModal.jsx`、`mobile/src/screens/PaymentAuthorizationScreen.jsx`、`mobile/src/mock/demoPickupRule.js`。
+**觸發原因**：登入與付款畫面程式碼有改動，依專案規則進行聚焦複查。
+
+### 發現
+
+未發現本次改動造成的注入、身份驗證／授權、機密、程式碼執行或資料外洩問題。
+
+### 沒發現問題的部分
+
+- 法律草案視窗只顯示靜態文字；點擊連結只切換本機視窗狀態，未傳送使用者資料或修改登入流程。
+- 取餐規則文字只取代展示模式的靜態資料；正式付款仍向 Backend 取得版本化規則，付款同意檢查及 LINE Pay 流程未改動。
+- 法律草案已標示尚待營運者資訊與個資告知事項確認，發布前仍須擁有者審閱。
+
+---
+
 ## 範本（複製這段開始寫新的一筆）
 
 ```

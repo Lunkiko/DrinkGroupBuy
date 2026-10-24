@@ -10,6 +10,7 @@ import { OrderDetailIcon } from "../components/OrderDetailIcon";
 import { getOrderStage, OrderJourneyCard, OrderProgressCard, OrderStoreCard } from "../components/OrderDetailVisuals";
 import { PickupPass } from "../components/PickupPass";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { TonePill } from "../components/TonePill";
 import { useOrderListSync } from "../hooks/useOrderListSync";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency, isWithdrawalLocked } from "../utils/calculations";
@@ -148,7 +149,7 @@ export function CustomerOrdersScreen({ navigation, route, appState, actions, sel
         </>
       ) : (
         <OrderListSection
-          title={`歷史訂單 ${historyOrders.length} 筆`}
+          title="歷史訂單"
           orders={historyOrders}
           groupBuyActivities={appState.groupBuyActivities}
           payments={appState.paymentAuthorizations}
@@ -164,7 +165,7 @@ export function CustomerOrdersScreen({ navigation, route, appState, actions, sel
 function OrderListSection({ title, orders, groupBuyActivities, payments, emptyText, onSelectOrder, historical = false }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <Section title={title}>
+    <Section title={title} headerRight={historical ? <Text style={styles.historyCount}>共 {orders.length} 筆</Text> : null}>
       {orders.length === 0 ? (
         <EmptyPanel>{emptyText}</EmptyPanel>
       ) : (
@@ -195,6 +196,38 @@ function OrderListCard({ order, groupBuyActivities, payments, historical, onPres
   const total = payment?.captureAmount ?? getOrderSubtotal(order);
   const progress = groupBuyActivity ? getGroupBuyActivityProgress(groupBuyActivity) : null;
   const progressText = progress ? `${progress.currentCups} / ${progress.nextTarget} 杯` : "團購資料已不存在";
+
+  if (historical) {
+    const historyStatus = getHistoryCardStatus(order, groupBuyActivity);
+    const historyAmount = payment?.captureAmount ?? order.finalAmount ?? getOrderSubtotal(order);
+    return (
+      <Card onPress={onPress} style={styles.historyCard}>
+        <View style={styles.historyTop}>
+          <Text style={styles.historyTitle}>{groupBuyActivity?.title ?? "團購活動"}</Text>
+          {historyStatus.label === "已完成" ? (
+            <View style={styles.historyCompletedBadge}>
+              <View style={styles.historyCheckCircle}><Text style={styles.historyCheck}>✓</Text></View>
+              <Text style={styles.historyCompletedText}>已完成</Text>
+            </View>
+          ) : <TonePill tone={historyStatus.tone} label={historyStatus.label} />}
+        </View>
+        <Text style={styles.historyStore}>{store?.name ?? "店家資料未提供"}</Text>
+        <Text style={styles.historyDescription}>{historyStatus.description}</Text>
+        <View style={styles.historyDivider} />
+        <View style={styles.historyItemsRow}>
+          <View style={styles.historyItems}>
+            {orderItems.slice(0, 2).map((item) => (
+              <Text key={item.id} style={styles.historyItemText}>{item.name} × {item.quantity}</Text>
+            ))}
+            {orderItems.length > 2 ? <Text style={styles.historyItemText}>另有 {orderItems.length - 2} 項</Text> : null}
+            {orderItems.length === 0 ? <Text style={styles.historyItemText}>飲品資料未提供</Text> : null}
+          </View>
+          <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={styles.historyAmount}>{formatHistoryAmount(historyAmount)}</Text>
+        </View>
+        <Text style={styles.historyOpenHint}>查看訂單詳情 ›</Text>
+      </Card>
+    );
+  }
 
   return (
     <Card onPress={onPress} style={styles.orderListCard}>
@@ -261,7 +294,13 @@ export function OrderDetailCard({ order, groupBuyActivities, payments, actions, 
       {!historical && stage <= 1 ? <OrderProgressCard activity={groupBuyActivity} progress={progress} stage={stage} /> : null}
       {!historical && stage === 2 ? (
         <Card style={styles.pickupCard}>
-          <View style={styles.pickupTimeRow}><OrderDetailIcon name="calendar" size={28} /><Text style={styles.pickupTime}>取餐時間  {groupBuyActivity?.pickupTime ?? "時間待確認"}</Text></View>
+          <View style={styles.pickupTimeRow}>
+            <OrderDetailIcon name="calendar" size={28} />
+            <View style={styles.pickupTimeContent}>
+              <Text style={styles.pickupTimeLabel}>取餐時間</Text>
+              <Text style={styles.pickupTime}>{groupBuyActivity?.pickupTime ?? "時間待確認"}</Text>
+            </View>
+          </View>
           {pickupCode ? <PickupPass pickupCode={pickupCode} cupCount={order.quantity} showCups={false} /> : <Notice title="正在取得取餐碼" message="請稍候，或重新進入訂單更新取餐資訊。" tone="info" />}
           <Text style={styles.pickupHint}>請於取餐時間內到店出示取餐碼。</Text>
         </Card>
@@ -532,13 +571,42 @@ function getHistoryReason(order, groupBuyActivity) {
   return "此訂單已歸入歷史訂單。";
 }
 
+function getHistoryCardStatus(order, groupBuyActivity) {
+  if (order.status === "cancelled" || groupBuyActivity?.status === "cancelled") {
+    return { label: "已取消", tone: "neutral", description: "訂單已取消。" };
+  }
+  if (order.paymentStatus === "refunded") {
+    return { label: "已退款", tone: "neutral", description: "訂單已退款。" };
+  }
+  if (order.pickupStatus === "expired") {
+    return { label: "逾期未取", tone: "danger", description: "取餐時間已結束。" };
+  }
+  if (groupBuyActivity?.status === "failed") {
+    return { label: "流團", tone: "neutral", description: "團購未達門檻。" };
+  }
+  if (order.pickupStatus === "picked_up") {
+    return { label: "已完成", tone: "success", description: "已取餐，訂單完成。" };
+  }
+  if (order.status === "completed") {
+    return { label: "已完成", tone: "success", description: "訂單已完成。" };
+  }
+  return { label: "已結束", tone: "neutral", description: getHistoryReason(order, groupBuyActivity) };
+}
+
+function formatHistoryAmount(amount) {
+  const value = Number(amount);
+  return Number.isFinite(value) ? `${value.toLocaleString("zh-TW")} 元` : "金額待確認";
+}
+
 const makeStyles = (colors, tones) => StyleSheet.create({
   orderNumber: { ...typeScale.caption, color: colors.textSecondary, maxWidth: 185, textAlign: "right" },
   detailSection: { gap: spacing.s12 },
   detailHeading: { ...typeScale.sectionTitle, color: colors.text },
   pickupCard: { gap: spacing.s16 },
-  pickupTimeRow: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
-  pickupTime: { ...typeScale.body, color: colors.accentInk },
+  pickupTimeRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.s12 },
+  pickupTimeContent: { flex: 1, minWidth: 0 },
+  pickupTimeLabel: { ...typeScale.bodyDense, color: colors.textSecondary },
+  pickupTime: { ...typeScale.body, color: colors.accentInk, flexShrink: 1 },
   pickupHint: { ...typeScale.bodyDense, color: colors.textSecondary, textAlign: "center" },
   amountLine: { minHeight: sizes.tap, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s12, borderTopWidth: 1, borderTopColor: colors.lineRow },
   amountLabel: { ...typeScale.body, color: colors.textSecondary },
@@ -561,6 +629,22 @@ const makeStyles = (colors, tones) => StyleSheet.create({
   orderListCard: {
     gap: spacing.s12
   },
+  historyCount: { ...typeScale.bodyDense, color: colors.textSecondary },
+  historyCard: { gap: spacing.s8, padding: spacing.s16 },
+  historyTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s8 },
+  historyTitle: { ...typeScale.sectionTitle, color: colors.text, flex: 1 },
+  historyCompletedBadge: { flexDirection: "row", alignItems: "center", gap: spacing.s8, borderRadius: radii.pill, paddingHorizontal: spacing.s8, paddingVertical: spacing.s4, backgroundColor: colors.recess },
+  historyCheckCircle: { width: spacing.s16, height: spacing.s16, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.accent },
+  historyCheck: { color: colors.onAccent, fontSize: 12, lineHeight: 16, fontWeight: "700" },
+  historyCompletedText: { ...typeScale.label, color: colors.accentInk },
+  historyStore: { ...typeScale.bodyDense, color: colors.text },
+  historyDescription: { ...typeScale.bodyDense, color: colors.textSecondary },
+  historyDivider: { borderTopWidth: sizes.stroke, borderTopColor: colors.lineRow, marginTop: spacing.s4 },
+  historyItemsRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.s8 },
+  historyItems: { flex: 1, gap: spacing.s4 },
+  historyItemText: { ...typeScale.bodyDense, color: colors.text },
+  historyAmount: { ...typeScale.price, color: colors.text, textAlign: "right" },
+  historyOpenHint: { ...typeScale.button, color: colors.accentInk, marginTop: spacing.s4 },
   listTop: {
     flexDirection: "row",
     justifyContent: "space-between",

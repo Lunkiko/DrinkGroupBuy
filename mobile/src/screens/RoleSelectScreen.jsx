@@ -7,6 +7,7 @@ import {
   loginWithFirebaseIdToken
 } from "../utils/apiClient";
 import { signOutFirebaseUser, useFirebaseGoogleLogin } from "../utils/firebaseAuth";
+import { LegalInfoModal } from "../components/LegalInfoModal";
 import { getRouteForUser } from "../utils/authRouting";
 import { isDemoMode } from "../utils/demoMode";
 import { demoCustomerUserId, demoMerchantStoreId, demoMerchantUserProfile, demoUserProfile } from "../mock/demoContent";
@@ -37,8 +38,10 @@ export function RoleSelectScreen(props) {
 function DemoRoleSelectContent({ navigation }) {
   const styles = useThemedStyles(makeStyles);
   const { selectRole } = useAppState();
+  const [legalType, setLegalType] = useState(null);
 
   return (
+    <>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <LoginHeroIllustration />
@@ -61,7 +64,7 @@ function DemoRoleSelectContent({ navigation }) {
       </Pressable>
 
       <Text style={styles.terms}>
-        登入代表您同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
+        登入前請閱讀<Text accessibilityRole="link" onPress={() => setLegalType("terms")} style={styles.termsLink}>服務條款</Text>與<Text accessibilityRole="link" onPress={() => setLegalType("privacy")} style={styles.termsLink}>隱私政策</Text>
       </Text>
       <Text style={styles.version}>揪飲 JOIN!</Text>
       <Pressable
@@ -72,6 +75,8 @@ function DemoRoleSelectContent({ navigation }) {
         <Text style={styles.textButtonLabel}>店家示範登入</Text>
       </Pressable>
     </ScrollView>
+    <LegalInfoModal type={legalType} onClose={() => setLegalType(null)} />
+    </>
   );
 }
 
@@ -82,6 +87,7 @@ function FirebaseRoleSelectScreen(props) {
 
 function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null }) {
   const styles = useThemedStyles(makeStyles);
+  const [legalType, setLegalType] = useState(null);
   const { selectRole } = useAppState();
   const { signInWithGoogle } = googleLogin || {};
   const [loginError, setLoginError] = useState("");
@@ -185,6 +191,7 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null }) {
   };
 
   return (
+    <>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <LoginHeroIllustration />
@@ -284,10 +291,12 @@ function RoleSelectContent({ navigation, isDevAuthMode, googleLogin = null }) {
       </Pressable>
 
       <Text style={styles.terms}>
-        登入代表您同意<Text style={styles.termsLink}>服務條款</Text>與<Text style={styles.termsLink}>隱私政策</Text>
+        登入前請閱讀<Text accessibilityRole="link" onPress={() => setLegalType("terms")} style={styles.termsLink}>服務條款</Text>與<Text accessibilityRole="link" onPress={() => setLegalType("privacy")} style={styles.termsLink}>隱私政策</Text>
       </Text>
       <Text style={styles.version}>揪飲 JOIN!</Text>
     </ScrollView>
+    <LegalInfoModal type={legalType} onClose={() => setLegalType(null)} />
+    </>
   );
 }
 

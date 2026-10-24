@@ -8,6 +8,7 @@ import { OrderAmountSummary } from "../components/OrderAmountSummary";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { StatusBadge } from "../components/StatusBadge";
 import { ValueRow } from "../components/ValueRow";
+import { demoPickupRule } from "../mock/demoPickupRule";
 import { maxFontSizeMultiplier, radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { formatCurrency } from "../utils/calculations";
 import { isDemoMode } from "../utils/demoMode";
@@ -77,12 +78,7 @@ export function PaymentAuthorizationScreen({ navigation, route, appState, action
   useEffect(() => {
     if (!payment) return undefined;
     if (demoCheckoutPreview) {
-      setPickupRule({
-        ruleType: "pickup_overdue",
-        ruleVersion: "demo",
-        title: "取餐與逾期未取規則（展示資料）",
-        content: "請在活動指定的取餐時段到店，出示六位取餐碼。逾期未取的處理依店家與活動規則辦理。"
-      });
+      setPickupRule(demoPickupRule);
       setPickupRuleStatus("ready");
       return undefined;
     }

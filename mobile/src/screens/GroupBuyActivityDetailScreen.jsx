@@ -7,6 +7,7 @@ import { MobileScreen, Section } from "../components/MobileScreen";
 import { Notice } from "../components/Notice";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { StatusBadge } from "../components/StatusBadge";
+import { RecruitingBadge } from "../components/RecruitingBadge";
 import { radii, sizes, spacing, typeScale } from "../theme/tokens";
 import { getGroupBuyActivityById, isWithdrawalLocked } from "../utils/calculations";
 import { formatDealFactorLabel } from "../utils/discountPercentFormat";
@@ -78,7 +79,7 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
           <View style={styles.storeHeading}>
             <Text style={styles.storeName}>{store?.name ?? "店家資料未提供"}</Text>
             {groupBuyActivity.status === "recruiting" ? (
-              <View style={styles.recruitingBadge}><View style={styles.recruitingDot} /><Text style={styles.recruitingText}>招募中</Text></View>
+              <RecruitingBadge />
             ) : <StatusBadge value={groupBuyActivity.status} />}
           </View>
           <View style={styles.storeInfoRow}><Text style={styles.infoIcon}>●</Text><Text style={styles.storeMeta}>{store?.address || "地址未提供"}</Text></View>
@@ -123,10 +124,11 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
           <Text style={styles.cardHeading}>注意事項</Text><Text style={styles.notesChevron}>{showNotes ? "⌃" : "⌄"}</Text>
         </Pressable>
         {showNotes ? <View style={styles.notes}>
+          <Text style={styles.noteText}>· 團購杯數與優惠會持續變動，最終折扣及請款金額以截止結算結果為準。</Text>
+          <Text style={styles.noteText}>· 請依訂單明細顯示的取餐時段到店；付款前請閱讀取餐與逾期未取規則。</Text>
           {withdrawalLocked ? <Notice tone="warning" message="目前距截止時間 30 分鐘內：仍可加入，既有訂單只能增加飲料，不能減少或退出。" /> : null}
           {groupBuyActivity.cancellationReason ? <Notice tone="danger" message={`取消原因：${groupBuyActivity.cancellationReason}`} /> : null}
           {groupBuyActivity.notices.map((notice) => <Text key={notice} style={styles.noteText}>· {notice}</Text>)}
-          {!withdrawalLocked && !groupBuyActivity.cancellationReason && groupBuyActivity.notices.length === 0 ? <Text style={styles.noteText}>目前沒有其他注意事項。</Text> : null}
         </View> : null}
       </Card>
 
@@ -136,8 +138,7 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
           disabled={!joinAction.target}
           onPress={() => {
             if (joinAction.target === "customerOrders") {
-              // Cross-tab: customerOrders is the Orders tab's own root, not a screen in this stack.
-              navigation.navigate("CustomerTabs", { screen: "OrdersTab" });
+              navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: existingOrder.id, historical: false } });
             } else if (joinAction.target === "drinkSelection") {
               navigation.push("drinkSelection", { groupBuyActivityId: groupBuyActivity.id });
             }
@@ -146,7 +147,9 @@ export function GroupBuyActivityDetailScreen({ navigation, route, appState, acti
         <PrimaryButton
           label="查看團購進度"
           variant="secondary"
-          onPress={() => navigation.push("groupProgress", { groupBuyActivityId: groupBuyActivity.id })}
+          onPress={() => existingOrder
+            ? navigation.navigate("OrdersTab", { screen: "customerOrders", params: { orderId: existingOrder.id, historical: false } })
+            : navigation.push("groupProgress", { groupBuyActivityId: groupBuyActivity.id })}
         />
       </View>
     </MobileScreen>
@@ -162,9 +165,6 @@ const makeStyles = (colors) => StyleSheet.create({
   storeDetails: { flex: 1, gap: spacing.s4 },
   storeHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.s4, flexWrap: "wrap" },
   storeName: { ...typeScale.price, color: colors.text, flexShrink: 1 },
-  recruitingBadge: { flexDirection: "row", alignItems: "center", gap: spacing.s4, paddingHorizontal: spacing.s8, paddingVertical: spacing.s4, borderRadius: radii.pill, backgroundColor: colors.progressTrack },
-  recruitingDot: { width: 8, height: 8, borderRadius: radii.pill, backgroundColor: colors.warmInk },
-  recruitingText: { ...typeScale.label, color: colors.warmInk },
   storeInfoRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.s8 },
   infoIcon: { ...typeScale.body, color: colors.textSecondary, width: 14, textAlign: "center" },
   storeMeta: { ...typeScale.bodyDense, color: colors.textSecondary, flex: 1 },

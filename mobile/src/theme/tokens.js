@@ -9,6 +9,7 @@ export const colors = {
   text: "#172554", // primary text, filled pearls, pickup-code panel ("deep navy")
   textSecondary: "#4A5F8A", // secondary text ("slate blue"); only on page or recess
   accent: "#2563EB", // solid fill of tappable things (text: onAccent) and 2px drawn outlines ("brand blue")
+  locationRing: "#FFFFFF", // white ring around the customer's map location dot
   accentInk: "#1D4ED8", // links and the text of selected labels
   progress: "#F9B819", // warm fill for the home activity progress bar
   progressTrack: "#FFF1C4", // pale track behind the warm progress fill
@@ -42,6 +43,7 @@ export const darkColors = {
   text: "#EAF2FF",
   textSecondary: "#A5B8D9",
   accent: "#60A5FA",
+  locationRing: "#FFFFFF",
   accentInk: "#BFDBFE",
   progress: "#F9B819",
   progressTrack: "#3A2C14",

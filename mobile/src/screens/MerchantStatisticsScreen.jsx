@@ -119,7 +119,7 @@ function StatisticsBody({ status, statistics, onRetry }) {
 
       <Text style={styles.note}>統計以已請款、未取消的訂單為準。</Text>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: explanationOpen }} onPress={() => setExplanationOpen((open) => !open)} style={styles.explanationButton}><Text style={styles.explanationIcon}>ⓘ</Text><Text style={styles.explanationLabel}>統計說明</Text><Text style={styles.explanationChevron}>{explanationOpen ? "⌃" : "⌄"}</Text></Pressable>
-      {explanationOpen ? <Text style={styles.explanationText}>全額退款不列入統計；部分退款會從累計實收扣除。逾期未取但已付款的訂單仍列入。折扣讓利為原價減實收；成團率為達到優惠門檻的團購占已結算團購的比例，進行中與店家取消的團購不列入。</Text> : null}
+      {explanationOpen ? <Text style={styles.explanationText}>累計實收為已請款金額扣除退款；成交訂單、折扣讓利與熱銷杯數以已請款且未取消的訂單計算。店家標記退款後，該筆仍可能列入訂單數與杯數。逾期未取但已付款的訂單仍列入。折扣讓利為原價減最終請款金額；成團率為達到優惠門檻的團購占已結算團購的比例，進行中與已取消的團購不列入。</Text> : null}
     </>
   );
 }
